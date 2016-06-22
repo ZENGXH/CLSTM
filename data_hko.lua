@@ -1,14 +1,9 @@
 require 'image'
-local data_verbose = false
-dofile 'data_configure.lua'
-
-
 
 function getdataSeqHko()
    -- local data = torch.DiskFile(datafile,'r'):readObject()
    -- data size (totalInstances or nsamples=2000?, nSequence_length=20, 1, 64, 64)
     local datasetSeq ={}
-
    --------------- configuration: -----------------
     local nSamples = opt.nSamples -- 2037 * 4-- data:size(1)
     local nSeq  = opt.nSeq --20 -- data:size(2)
