@@ -21,15 +21,15 @@ require 'encoder'
 require 'decoder'
 require 'flow'
 
---------- end of build model
-local function main()
+local log = loadfile('log.lua')
+local model = loadfile('model_hko.lua') 
 
+
+local function main()
   -- cutorch.setDevice(1)
   paths.dofile('opts_hko.lua')
   log.trace("load opt ")
-
   paths.dofile('data_hko.lua')
-  model = loadfile('model_hko.lua') 
   datasetSeq = getdataSeqHko() -- we sample nSeq consecutive frames
 
   log.info('[init] Loaded ' .. datasetSeq:size() .. ' images')
