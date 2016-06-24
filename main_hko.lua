@@ -22,9 +22,10 @@ require 'cutorch'
 local log = loadfile('log.lua')()
 paths.dofile('opts_hko.lua')
 dofile('model_hko.lua') 
-
+SaveModel(enc, 'enc', iter)
+SaveModel(dec, 'dec', iter)
+ 
 local criterion = nn.SequencerCriterion(nn.MSECriterion())
-
 if opt.useGpu then
     require 'cunn'
     criterion = criterion:cuda()
@@ -40,7 +41,7 @@ local function main()
 
   torch.manualSeed(opt.seed)
   log.info('[init] set seed ', opt.seed)
-  datasetSeq = getdataSeqHko() -- we sample nSeq consecutive frames
+  datasetSeq = getdataSeqHko('train') -- we sample nSeq consecutive frames
   -- log.info('[init] Loaded ' .. datasetSeq:size() .. ' images')
   log.info('[init] ==> training model')
   

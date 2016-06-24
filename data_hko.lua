@@ -1,14 +1,23 @@
 require 'image'
 local log = loadfile('log.lua')()
 
-function getdataSeqHko()
+function getdataSeqHko(mode)
    -- local data = torch.DiskFile(datafile,'r'):readObject()
    -- data size (totalInstances or nsamples=2000?, nSequence_length=20, 1, 64, 64)
-    local datasetSeq ={}
+   local mode = mode or 'train'
+   local datasetSeq ={}
    --------------- configuration: -----------------
 
-    log.trace('opening listFile: ', opt.listFile)
-    local f = io.open(opt.listFile, 'r')
+    local f 
+    if(mode == 'train') then
+        f = io.open(opt.listFileTrain, 'r')
+        log.trace('opening listFile: ', opt.listFileiTrain)
+    elseif(mode == 'test') then
+        f = io.open(opt.listFileTest, 'r')
+        log.trace('opening listFile: ', opt.listFileiTest)
+    else
+        log.fatal('[getdataSeqHko] mode: '.. mode..' invalid')
+    end
 
     local fileList = {}    
     for line in f:lines() do

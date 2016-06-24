@@ -88,17 +88,17 @@ end
 
 function SaveModel(model, modelname, iter)
     local emptymodel = model:clone('weight', 'bias'):float()
-    local filename = opt.modelDir..modelname..'iter-'..tostring(iter)..'.bin' 
+    local filename = opt.modelDir..modelname..'_iter_'..tostring(iter)..'.bin' 
     torch.save(filename, emptymodel)
     log.info('current model is saved as', filename)
 end
 
-function PixelToRainfall(img, a, b):
+function PixelToRainfall(img, a, b)
     local a = a or 118.239
     local b = b or 1.5241
     local dBZ = img * 70.0 - 10.0
     local dBR = (dBZ - 10.0 * math.log10(a)):div(b)
-    local R = math.pow(10, dBR / 10.0)
+    local R = torch.pow(10, dBR / 10.0)
     return R
 end
 
@@ -114,9 +114,12 @@ function SkillScore(prediction, truth, threthold)
                 (sqrt(square(prediction).sum()) * 
                 sqrt(square(truth).sum() + eps)) 
     ]]--
-    local threshold = threshold pr 0.5
-    local bpred = torch.gt(PixelToRainfall(prediction), threshold)
-    local btruth = torch.gt(PixelToRainfall(truth), threshold)
+    local threshold = threshold or 0.5
+    local rainfallPred = PixelToRainfall(prediction)
+    local rainfallTruth = PixelToRainfall(truth)
+
+    local bpred = torch.gt(rainfallPred, threshold)
+    local btruth = torch.gt(rainfallTruth, threshold)
     local bpredTrue = bpred:float()
     local btruthTrue = btruth:float()
     local bpredFalse = torch.eq(bpred, 0):float()
@@ -130,9 +133,43 @@ function SkillScore(prediction, truth, threthold)
     local FAR = (falseAlarms) / (hits + falseAlarms + eps)
     local CSI = (hits + eps) / (hits + misses + falseAlarms + eps)
     local correlation = torch.cmul(prediction, truth):sum() / (
-                math.sqrt(torch.cmul(prediction, prediction):sum()) * math.sqrt(torch.mul(truth, truth):sum() + eps))
-    return {"POD": POD, "FAR": FAR, "CSI": CSI, "correlation": correlation, "Rain RMSE": rain_rmse, "RMSE": rmse}
+                math.sqrt(torch.cmul(prediction, prediction):sum()) * math.sqrt(torch.cmul(truth, truth):sum() + eps))
+    local rainRmse = torch.cmul((rainfallPred - rainfallTruth), (rainfallPred - rainfallTruth)):sum()
+    local scores = {}
+    scores.POD = POD
+    scores.FAR = FAR
+    scores.CSI = CSI
+    scores.correlation = correlation
+    scores.rainRmse = rainRmse
+    return scores
 end
 
 
+function forwardConnect(enc, dec)
+    -- log.trace('[forwardConnect]')
+    for i=1, #enc.lstmLayers do
+        if opt.useSeqLSTM then
+            dec.lstmLayers[i].userPrevOutput = enc.lstmLayers[i].output[opt.inputSeqLen]
+            dec.lstmLayers[i].userPrevCell = enc.lstmLayers[i].cell[opt.inputSeqLen]
+        else
+            -- log.info("dec connect: ", #enc.lstmLayers[i].cells)
+            assert(#enc.lstmLayers[i].cells == opt.inputSeqLen)
+            dec.lstmLayers[i].userPrevOutput = nn.rnn.recursiveCopy(dec.lstmLayers[i].userPrevOutput, enc.lstmLayers[i].outputs[opt.inputSeqLen])
+            dec.lstmLayers[i].userPrevCell = nn.rnn.recursiveCopy(dec.lstmLayers[i].userPrevCell, enc.lstmLayers[i].cells[opt.inputSeqLen])
+        end
+    end
+    --log.trace('[forwardConnect] done@')
+end
 
+function backwardConnect(enc, dec)
+    -- log.trace('[backwardConnect]')
+    for i=1,#enc.lstmLayers do
+        if opt.useSeqLSTM then
+            enc.lstmLayers[i].userNextGradCell = dec.lstmLayers[i].userGradPrevCell
+            enc.lstmLayers[i].gradPrevOutput = dec.lstmLayers[i].userGradPrevOutput
+        else
+            enc.lstmLayers[i].userNextGradCell = nn.rnn.recursiveCopy(enc.lstmLayers[i].userNextGradCell, dec.lstmLayers[i].userGradPrevCell)
+            enc.lstmLayers[i].gradPrevOutput = nn.rnn.recursiveCopy(enc.lstmLayers[i].gradPrevOutput, dec.lstmLayers[i].userGradPrevOutput)
+        end
+    end
+end
