@@ -59,6 +59,8 @@ function ConvLSTM:buildGateIF()
 
    -- local cell2gate = nn.HadamardMul(self.inputSize, 1, 1) -- weight = inputSize x 1 x 1
    local cell2gate = backend.SpatialConvolution(self.outputSize, self.outputSize, 1, 1, self.stride, self.stride, 0, 0) -- weight = inputSize x 1 x 1
+   local p, gp = cell2gate:getParameters()
+   p = p:fill(0)
    local para = nn.ParallelTable()
    para:add(input2gate):add(output2gate):add(cell2gate)
    gate:add(para)

@@ -28,18 +28,24 @@ function getdataSeqHko()
         log.trace("SelectSeq")
 
         local inputBatch = torch.Tensor(opt.batchSize, opt.nSeq, opt.imageDepth, opt.imageHeight, opt.imageWidth)
-        ind = ind + 1
 
         for batch_ind = 1, opt.batchSize do -- filling one batch one by one
-            log.trace("<selecting> batch #", batch_ind)
             -- math.ceil(torch.uniform(1e-12, nsamples)) 
             -- choose an index in range{1,.. nsamples}
             -- image index
-           -- read the 20 frames starting from i
+            -- read the 20 frames starting from i
             for frames_id = 1, opt.totalSeqLen do
-               local imageName = opt.dataPath..fileList[ (batch_ind - 1) * opt.totalSeqLen + frames_id]
+               -- local imageName = opt.dataPath..fileList[ (batch_ind - 1 + ind) * opt.totalSeqLen + frames_id]
+               local imageName = opt.dataPath..fileList[ (batch_ind - 1) + (ind - 1) * opt.batchSize  + frames_id]
                inputBatch[batch_ind][frames_id] = image.load(imageName)
-               log.trace("loading img: ", imageName)
+               if frames_id == 1 then
+                   log.trace("[SelectSeq] load batch#", batch_ind, " seq#",  opt.totalSeqLen, " from ", imageName)
+               end
+            end
+            ind = ind + 1
+            if batch_ind + (ind - 1) * opt.batchSize + opt.totalSeqLen > #fileList then
+                ind = 1
+                log.info('[SelectSeq] dataset end, restart')
             end
          end
          return inputBatch, ind

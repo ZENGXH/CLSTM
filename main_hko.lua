@@ -8,8 +8,8 @@ require 'torch'
 require 'ConvLSTM'
 require 'HadamardMul'
 require 'utils'
--- require 'cunn'
--- require 'cutorch'
+require 'cunn'
+require 'cutorch'
 -- require 'BilinearSamplerBHWD'
 -- require 'display_flow'
 -- torch.setdefaulttensortype('torch.FloatTensor')
@@ -33,7 +33,7 @@ end
 local err = 0
 
 local function main()
-  -- cutorch.setDevice(1)
+  -- cutorch.setDevice(5)
   log.trace("load opti done@")
   paths.dofile('data_hko.lua')
   log.trace("load data_hko done@")
@@ -59,7 +59,8 @@ local function main()
 
       local inputEncTable = {}
       for i = 1, opt.inputSeqLen do 
-          log.trace('[append] input data for encoder', i)
+          -- log.trace('[append] input data for encoder', i)
+
           table.insert(inputEncTable, data[{{}, {i}, {}, {}, {}}]:select(2,1))
       end
 
@@ -71,7 +72,6 @@ local function main()
       -- local target = data[{{}, {opt.inputSeqLen + 1, opt.totalSeqLen}, {}, {}, {}}] 
 
       -- in shape (15, 8, 1, 100, 100)
-      OutputToImage(inputEncTable, iter, 'input')
       local output_enc = enc:forward(inputEncTable)
 
       log.trace('[fw] forward encoder done@ output')
@@ -83,16 +83,16 @@ local function main()
 
       local inputDecTable = {}
       for i = 1, opt.outputSeqLen do
-          log.trace('[append] input data for decoder', i)
+          -- log.trace('[append] input data for decoder', i)
           table.insert(inputDecTable, inputDecTensor)
       end
 
       local output = dec:forward(inputDecTable)
-      
-      OutputToImage(output, iter, 'output')
 
       local loss = criterion:updateOutput(output, target)
-      log.info('@loss ', loss, ' iter ', iter, ' / ', opt.maxIter)
+      if(math.fmod(iter, 50) == 0) then
+          log.info('@loss ', loss, ' iter ', iter, ' / ', opt.maxIter)
+      end
 
       zeroGradDec = {}
       zeroT = torch.Tensor(opt.batchSize, opt.nFiltersMemory[2], opt.imageHeight, opt.imageWidth):zero()
@@ -104,7 +104,7 @@ local function main()
       --           'size of grad output encoder: ', zeroT:size())
       
       for i = 1, #inputEncTable do
-          log.trace('[bp] appending tensor to grad output of encoder: ')
+          -- log.trace('[bp] appending tensor to grad output of encoder: ')
           table.insert(zeroGradDec, zeroT)
       end
 
@@ -112,8 +112,8 @@ local function main()
       gradOutput = criterion:updateGradInput(output, target)
       local gradDec = dec:backward(inputDecTable, gradOutput)
       backwardConnect(enc, dec)
-      log.trace("gradOutput: ", gradOutput)
-      log.trace("gradDec", gradDec)
+      -- log.trace("gradOutput: ", gradOutput)
+      -- log.trace("gradDec", gradDec)
 
       log.trace("[bp] update grad input of encoder: ")
       local gradEnc = enc:backward(inputEncTable, zeroGradDec)
@@ -121,22 +121,23 @@ local function main()
       log.trace("[bp] update parameters")
       dec:updateParameters(opt.lr)
       enc:updateParameters(opt.lr)
-       
-      -- start backward
-      -- local gradInput4 = convForward_4:updateGradInput(inputTable4, loss)     
-      -- update para:
-      -- convForward_4:accGradParameters(inputTable4, loss)  
-      -- TODO: check BACKWARD CONNECT FOR CONVFORWARD
+      if(math.fmod(iter, 50) == 0) then
+          OutputToImage(inputEncTable, iter, 'input')
+          log.trace('[saveimg] dec')
+          ViewCell(dec, iter, 'dec')
+          log.trace('[saveimg] enc')
+          ViewCell(enc, iter, 'enc')
+          -- ViewCell(output)
+          log.trace('[saveimg] output_enc')
+          OutputToImage(output_enc, iter, 'output_enc')
+          log.trace('[saveimg] output')
+          OutputToImage(output, iter, 'output')
+      end
 
-      -- local gradInput3 = decoder_1:updateGradInput(output_decoder0, gradInput4[2][2])
-
-      -- update para:
-      -- decoder_1:accGradParameters(output_decoder0, gradInput4[2][1])
-      -- decoder_0:accGradParameters(output_decoder0, gradInput4[2][2])
-      -- backwardConnect(encoder_0, decoder_0)
-      -- backwardConnect(encoder_1, decoder_1)
-      -- model:updateGradInput(input4, gradErrGrad)
-      -- model:accGradParameters(inputTable, gradErrGrad)  
+      if(math.fmod(iter, 1000) == 0) then
+          SaveModel(enc, 'enc', iter)
+          SaveModel(dec, 'dec', iter)
+      end
 
       err = err + loss
 

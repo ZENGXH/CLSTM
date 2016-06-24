@@ -50,21 +50,23 @@ log.trace(dec)
 
 log:trace("[init] load model enc and dec done@")
 function forwardConnect(enc, dec)
-    log.trace('[forwardConnect]')
+    -- log.trace('[forwardConnect]')
     for i=1, #enc.lstmLayers do
         if opt.useSeqLSTM then
-            dec.lstmLayers[i].userPrevOutput = enc.lstmLayers[i].output[opt.seqLen]
-            dec.lstmLayers[i].userPrevCell = enc.lstmLayers[i].cell[opt.seqLen]
+            dec.lstmLayers[i].userPrevOutput = enc.lstmLayers[i].output[opt.inputSeqLen]
+            dec.lstmLayers[i].userPrevCell = enc.lstmLayers[i].cell[opt.inputSeqLen]
         else
-            dec.lstmLayers[i].userPrevOutput = nn.rnn.recursiveCopy(dec.lstmLayers[i].userPrevOutput, enc.lstmLayers[i].outputs[opt.seqLen])
-            dec.lstmLayers[i].userPrevCell = nn.rnn.recursiveCopy(dec.lstmLayers[i].userPrevCell, enc.lstmLayers[i].cells[opt.seqLen])
+            -- log.info("dec connect: ", #enc.lstmLayers[i].cells)
+            assert(#enc.lstmLayers[i].cells == opt.inputSeqLen)
+            dec.lstmLayers[i].userPrevOutput = nn.rnn.recursiveCopy(dec.lstmLayers[i].userPrevOutput, enc.lstmLayers[i].outputs[opt.inputSeqLen])
+            dec.lstmLayers[i].userPrevCell = nn.rnn.recursiveCopy(dec.lstmLayers[i].userPrevCell, enc.lstmLayers[i].cells[opt.inputSeqLen])
         end
     end
-    log.trace('[forwardConnect] done@')
+    --log.trace('[forwardConnect] done@')
 end
 
 function backwardConnect(enc, dec)
-    log.trace('[backwardConnect]')
+    -- log.trace('[backwardConnect]')
     for i=1,#enc.lstmLayers do
         if opt.useSeqLSTM then
             enc.lstmLayers[i].userNextGradCell = dec.lstmLayers[i].userGradPrevCell
