@@ -44,7 +44,7 @@ end
 
 
 function FastConvLSTM::orinnModel()
-    local 
+     
 
 
 

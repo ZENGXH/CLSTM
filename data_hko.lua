@@ -1,60 +1,56 @@
 require 'image'
+local log = loadfile('log.lua')()
 
 function getdataSeqHko()
    -- local data = torch.DiskFile(datafile,'r'):readObject()
    -- data size (totalInstances or nsamples=2000?, nSequence_length=20, 1, 64, 64)
     local datasetSeq ={}
    --------------- configuration: -----------------
-    local nSamples = opt.nSamples -- 2037 * 4-- data:size(1)
-    local nSeq  = opt.nSeq --20 -- data:size(2)
-    local nBatch = opt.nBatch
-   -- log.INFO (nsamples .. ' ' .. nSeq .. ' ' .. nRows .. ' ' .. nCols)
 
-   ------------- read the powerful txt file! ------
+    log.trace('opening listFile: ', opt.listFile)
     local f = io.open(opt.listFile, 'r')
-    local id = 1
-    local fileList = {}
-    
+
+    local fileList = {}    
     for line in f:lines() do
-        fileList[id] = line
-        id = id + 1
+        table.insert(fileList, line)
     end
 
-    assert(table.getn(opt.dataList) == nSeq * nSamples)
+    log.info("[init] read data into fileList table, size in total: ", table.getn(fileList))
+    log.info("[init] size of input batch ", opt.batchSize, opt.nSeq, opt.imageDepth, opt.imageHeight, opt.imageWidth)
 
     function datasetSeq:size()
-        return nsamples
+        return table.getn(fileList)
     end
 
-    local ind = 1
 
+    local ind = 1
     function datasetSeq:SelectSeq()
         log.trace("SelectSeq")
-        local input_batch = torch.Tensor(nBatch, nSeq, 
-                            opt.imageDepth, opt.imageHeight, opt.imageWidth)
 
-        for batch_ind = 1, nBatch do -- filling one batch one by one
-            local i = ind
-            ind = ind + 1
-            log.trace("<selecting> batch_ind # " + ind)
+        local inputBatch = torch.Tensor(opt.batchSize, opt.nSeq, opt.imageDepth, opt.imageHeight, opt.imageWidth)
+        ind = ind + 1
+
+        for batch_ind = 1, opt.batchSize do -- filling one batch one by one
+            log.trace("<selecting> batch #", batch_ind)
             -- math.ceil(torch.uniform(1e-12, nsamples)) 
             -- choose an index in range{1,.. nsamples}
             -- image index
-            -- read the 20 frames starting from i
-            for k = 1, nSeq do
-               input_batch[batch_ind][k] = image.load(opt.dataPath..fileList[(i-1) * nSeq + k])
-
+           -- read the 20 frames starting from i
+            for frames_id = 1, opt.totalSeqLen do
+               local imageName = opt.dataPath..fileList[ (batch_ind - 1) * opt.totalSeqLen + frames_id]
+               inputBatch[batch_ind][frames_id] = image.load(imageName)
+               log.trace("loading img: ", imageName)
             end
          end
-         return input_batch,i
+         return inputBatch, ind
       end
 
-   dataSample = torch.Tensor(nBatch, nSeq, opt.imageDepth, opt.imageHeight, opt.imageWidth)
+   dataSample = torch.Tensor(opt.batchSize, opt.nSeq, opt.imageDepth, opt.imageHeight, opt.imageWidth)
    
    setmetatable(datasetSeq, {__index = function(self, index)
-                                       local sample, i = self:selectSeq()
+                                       local sample, i = self:SelectSeq()
                                        dataSample:copy(sample)
-                                       return {dsample,i}
+                                       return {dataSample, i}
                                     end})
    return datasetSeq
 end
