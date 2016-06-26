@@ -3,6 +3,7 @@
 
 -- set this to true to have it use nngraph instead of nn
 -- setting this to true can make your next FastLSTM significantly faster
+local THNN = require 'nn.THNN'
 
 require 'nngraph'
 require 'nn'
@@ -10,11 +11,19 @@ require 'ConvLSTM'
 require 'dpnn'
 require 'rnn'
 local log = loadfile('log.lua')
-local FastConvLSTM, parent = torch.class("nn.FastConvLSTM", "nn.ConvLSTM")
+local FastConvLSTM, parent = torch.class("nn.FastConvLSTM", "nn.Module")
 
 FastConvLSTM.usenngraph = false -- dafault to be true
 
 function FastConvLSTM:__init(inputSize, outputSize, rho, kc, km, stride, batchSize, hight, width)
+
+   log.trace("[ConvLSTM] init input & outputSize ", inputSize, outputSize, 
+            " kernel size ", kc, km, 
+            "stride ", stride, 
+            "padding ", padc, padm,
+            "rho ", rho,
+            "batchSize ", batchSize)
+
     self.H = hight or 50
     self.W = width or 50
     -- (inputSize, outputSize, rho, kc, km, stride, batchSize)
@@ -27,12 +36,27 @@ function FastConvLSTM:__init(inputSize, outputSize, rho, kc, km, stride, batchSi
     self.i2g_padding = math.floor(kc / 2) or 1
     self.o2g_padding = math.floor(km / 2) or 1
     self.rho = rho or 9999
-    parent.__init(self, self.inputSize, self.outputSize, self.rho, self.kc, self.km, self.stride, self.batchSize)
+    self.nInputPlane = nInputPlane
+    self.nOutputPlane = nOutputPlane
+
+    self.weightInput = torch.Tensor(inputSize, 4 * outputSize, self.kc, self.kc)
+    self.weighthidden = torch.Tensor(outputSize, 4 * outputSize, self.km, self.km)
+
+    self.weightPreCell = torch.Tensor(outputSize, 2 * outputSize, 1, 1)
+    self.weightCurCell = torch.Tensor(outputSize, outputSize, 1, 1)
+    self.bias = torch.Tensor(4 * outputSize)
+    self.weightInput = torch.Tensor(inputSize, 4 * outputSize, self.kc, self.kc)
+    self.weighthidden = torch.Tensor(outputSize, 4 * outputSize, self.km, self.km)
+    self.weightPreCell = torch.Tensor(outputSize, 2 * outputSize, 1, 1)
+    self.weightCurCell = torch.Tensor(outputSize, outputSize, 1, 1)
+ 
+    self.gradBias = torch.Tensor(nOutputPlane)
 end
 
 local function FastConvLSTM:buildModel()
     self.i2g = nn.SpatialConvolution(self.inputSize, self.outputSize * 4, self.kc, self.kc, self.stride, self.stride, self.padc, self.padc)
     self.o2g = nn.SpatialConvolution(self.outputSize, self.outputSize * 4, self.km, self.km, self.stride, self.stride, self.padm, self.padm) 
+    self.o2g:noBias() 
 
     if self.usenngraph then
         return self:nngraphModel()
@@ -43,16 +67,16 @@ local function FastConvLSTM:buildModel()
 end
 
 
-function FastConvLSTM::orinnModel()
-     
-
-
 
 function FastConvLSTM::nnModel()
-    local para = nn.ParallelTable():add(self.i2g):add(self.o2g)
     
+    local preCellToGate = nn.NarrowTable(3)
+    preCellToGate:add(nn.SpatialConvolution(self.inputSize, self.outputSize * 2, 1, 1, 1, 1, 0, 0))
+    preCellToGate:add(nn.SplitTable(1))
+
     local gates = nn.Sequential()
     gates:add(nn.NarrowTable(1,2))
+    local para = nn.ParallelTable():add(self.i2g):add(self.o2g)
     gates:add(para)
     gates:add(nn.CAddTable())
     -- Reshape to (batch_size, n_gates, hid_size)
@@ -61,6 +85,7 @@ function FastConvLSTM::nnModel()
     gates:add(nn.SplitTable(2))
 
     transfer = nn.ParallelTable()
+    gatesInput = nn.NarrowTable(1):add()
     transfer:add(nn.Sigmoid()):add(nn.Tanh()):add(nn.Sigmoid()):add(nn.Sigmoid())
     gates:add(transfer)
 

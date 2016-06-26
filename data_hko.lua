@@ -1,5 +1,6 @@
 require 'image'
 local log = loadfile('log.lua')()
+log.level = opt.dataLoaderLogLevel or "trace"
 
 function getdataSeqHko(mode)
    -- local data = torch.DiskFile(datafile,'r'):readObject()

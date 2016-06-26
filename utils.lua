@@ -1,30 +1,23 @@
 require 'image'
 local log = loadfile('log.lua')()
 
-
-function OutputToImage(output, iter, name)
+function OutputToImage(output, iter, name, saveDir)
+    local saveDir = saveDir or opt.saveDir
     -- output: table, size == outputSeqLength
     assert(type(output) == 'table')
     local output_batch
     for id_frames = 1, #output do
-        -- log.trace('saving output image')
         output_batch = output[id_frames]
-        if(output_batch:size(1) == opt.batchSize) then
+        if(output_batch:size(1) == opt.batchSize) then -- choose the first batch
             output_batch = output_batch[1]
         end
-        -- log.trace('size: ', output_batch:size())
-        if(output_batch:size(1) ~= opt.imageDepth) then 
-            -- log.trace(output_batch:size())
+        if(output_batch:size(1) ~= opt.imageDepth and output_batch:dim() == 3) then -- choose the first dimension 
             output_batch = output_batch:select(1,1)
-            -- log.trace(output_batch:size())
-       end
-
-        -- assert(output_batch:size(2) == opt.imageHeight)
-        -- assert(output_batch:size(3) == opt.imageWidth)
-        -- output_batch: 2, 1, 100, 100
-        -- print('size of output_batch: ', output_batch:size())
-        image.save(opt.saveDir..timeStamp()..'it'..tostring(iter)..name..'n_'..tostring(id_frames)..'.png', 
-                    output_batch:div(output_batch:max()))
+        end
+        if(output_batch:dim() == 4 and output_batch:size(1) == 1) then -- target: {(1, 1, 100, 100). (1, 1, 100, 100), ...}
+            output_batch = output_batch[1]
+        end
+        image.save(saveDir..'it'..tostring(iter)..name..'n_'..tostring(id_frames)..'.png', output_batch:div(output_batch:max()))
     end
 end
 
@@ -102,7 +95,9 @@ function PixelToRainfall(img, a, b)
     return R
 end
 
-function SkillScore(prediction, truth, threthold)
+
+function SkillScoreSub(scores, prediction, truth, threshold, id)
+    
     --[[
     POD = hits / (hits + misses)
     FAR = false_alarms / (hits + false_alarms)
@@ -114,20 +109,30 @@ function SkillScore(prediction, truth, threthold)
                 (sqrt(square(prediction).sum()) * 
                 sqrt(square(truth).sum() + eps)) 
     ]]--
-    local threshold = threshold or 0.5
+    assert(threshold)
+    assert(torch.isTensor(prediction))
+    -- log.trace(string.format("prediction: (%.4f, %.4f) vs truth: (%.4f, %.4f)", prediction:max(), prediction:min(), truth:max(), truth:min()))
+    -- prediction = prediction:div(prediction:max() - prediction:min())
     local rainfallPred = PixelToRainfall(prediction)
     local rainfallTruth = PixelToRainfall(truth)
 
     local bpred = torch.gt(rainfallPred, threshold)
     local btruth = torch.gt(rainfallTruth, threshold)
+    
+    -- log.trace(string.format('id %d, mean bpred: %.4f, btruth %.4f', id, prediction:mean(), truth:mean())) 
     local bpredTrue = bpred:float()
     local btruthTrue = btruth:float()
     local bpredFalse = torch.eq(bpred, 0):float()
     local btruthFalse = torch.eq(btruth, 0):float()
-    local hits = bpredTrue:cmul(btruthTrue):sum()
-    local misses = bpredFalse:cmul(btruthTrue):sum()
-    local falseAlarms = bpredTrue:cmul(btruthFalse):sum()
-    local correctNegatives = bpredFalse:cmul(btruthFalse):sum()
+    local hits = torch.cmul(bpredTrue, btruthTrue):sum()
+    local misses = torch.cmul(bpredFalse, btruthTrue):sum()
+    
+    local falseAlarms = torch.cmul(bpredTrue, btruthFalse):sum()
+    log.trace('falseAlarms: bpredTrue ', bpredTrue:mean())
+    log.trace('falseAlarms: btruthFalse ', btruthFalse:mean())
+    log.trace('falseAlarms: ', falseAlarms)
+    local correctNegatives = torch.cmul(bpredFalse, btruthFalse):sum()
+
     local eps = 1e-9
     local POD = (hits + eps) / (hits + misses + eps)
     local FAR = (falseAlarms) / (hits + falseAlarms + eps)
@@ -135,12 +140,24 @@ function SkillScore(prediction, truth, threthold)
     local correlation = torch.cmul(prediction, truth):sum() / (
                 math.sqrt(torch.cmul(prediction, prediction):sum()) * math.sqrt(torch.cmul(truth, truth):sum() + eps))
     local rainRmse = torch.cmul((rainfallPred - rainfallTruth), (rainfallPred - rainfallTruth)):sum()
-    local scores = {}
-    scores.POD = POD
-    scores.FAR = FAR
-    scores.CSI = CSI
-    scores.correlation = correlation
-    scores.rainRmse = rainRmse
+    rainRmse = rainRmse / prediction:nElement()
+    
+    -- log.trace(string.format("id: %d POD %.3f \t FAR %.3f \t CSI %.3f \t correlation %.3f \t rainRmse %.3f", id, POD, FAR, CSI, correlation, rainRmse))
+    scores.POD[id] = scores.POD[id] + POD
+    scores.FAR[id] = scores.FAR[id] + FAR
+    scores.CSI[id] = scores.CSI[id] + CSI
+    scores.correlation[id] = scores.correlation[id] + correlation
+    scores.rainRmse[id] = scores.rainRmse[id] + rainRmse
+    return scores
+end
+
+function SkillScore(scores, prediction, truth, threshold)
+    local threshold = threshold or 0.5
+    assert(type(prediction) == 'table')
+    log.trace(string.format("eval all output in length: %d", opt.outputSeqLen))
+    for id = 1, opt.outputSeqLen do 
+        scores = SkillScoreSub(scores, prediction[id], truth[id], threshold, id)
+    end
     return scores
 end
 

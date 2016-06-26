@@ -22,6 +22,7 @@ require 'cutorch'
 local log = loadfile('log.lua')()
 paths.dofile('opts_hko.lua')
 dofile('model_hko.lua') 
+log.level = opt.trainLogLevel or "trace"
 SaveModel(enc, 'enc', iter)
 SaveModel(dec, 'dec', iter)
  
@@ -74,7 +75,7 @@ local function main()
 
       -- in shape (15, 8, 1, 100, 100)
       local output_enc = enc:forward(inputEncTable)
-
+      collectgarbage()
       log.trace('[fw] forward encoder done@ output')
       forwardConnect(enc, dec)
       inputDecTensor = torch.Tensor(opt.batchSize, opt.imageDepth, opt.imageHeight, opt.imageWidth):fill(0)
@@ -89,8 +90,10 @@ local function main()
       end
 
       local output = dec:forward(inputDecTable)
+      collectgarbage()
 
       local loss = criterion:updateOutput(output, target)
+      collectgarbage()
       if(math.fmod(iter, 50) == 0) then
           log.info('@loss ', loss, ' iter ', iter, ' / ', opt.maxIter)
       end
@@ -111,6 +114,7 @@ local function main()
 
 
       gradOutput = criterion:updateGradInput(output, target)
+      collectgarbage()
       local gradDec = dec:backward(inputDecTable, gradOutput)
       backwardConnect(enc, dec)
       -- log.trace("gradOutput: ", gradOutput)
@@ -118,11 +122,12 @@ local function main()
 
       log.trace("[bp] update grad input of encoder: ")
       local gradEnc = enc:backward(inputEncTable, zeroGradDec)
+      collectgarbage()
       
       log.trace("[bp] update parameters")
       dec:updateParameters(opt.lr)
       enc:updateParameters(opt.lr)
-      if(math.fmod(iter, 50) == 0) then
+      if(math.fmod(iter, opt.saveIter) == 0) then
           OutputToImage(inputEncTable, iter, 'input')
           log.trace('[saveimg] dec')
           ViewCell(dec, iter, 'dec')

@@ -10,12 +10,22 @@ require 'cutorch'
 
 local log = loadfile('log.lua')()
 paths.dofile('opts_hko.lua')
+log.level = opt.evalLogLevel or "info"
+if not paths.dirp(opt.testLogDir) then
+    os.execute('mkdir -p ' .. opt.testLogDir)
+end
+if not paths.dirp(opt.testSaveDir) then
+    os.execute('mkdir -p ' .. opt.testSaveDir)
+end
+
 paths.dofile('data_hko.lua')
 log.outfile = opt.testLogDir..'eval_hko_log'
 
-opt.useGpu = false
+opt.useGpu = false 
+log.info('[init] useGpu: ', opt.useGpu)
 
 local criterion = nn.SequencerCriterion(nn.MSECriterion())
+log.info('[init] set criterion ', criterion)
 if opt.useGpu then
     require 'cunn'
     criterion = criterion:cuda()
@@ -31,13 +41,22 @@ end
 
 enc:zeroGradParameters()
 dec:zeroGradParameters()
-log.info('[init] ==> evaluating model')
+log.info(string.format("[init] ==> evaluating model: enc: %s, dec: %s", opt.modelEnc, opt.modelDec))
 datasetSeq = getdataSeqHko('test')
+
+local scores = {}
+scores.POD = torch.Tensor(opt.outputSeqLen):zero()
+scores.FAR = torch.Tensor(opt.outputSeqLen):zero()
+scores.CSI = torch.Tensor(opt.outputSeqLen):zero()
+scores.correlation = torch.Tensor(opt.outputSeqLen):zero()
+scores.rainRmse =  torch.Tensor(opt.outputSeqLen):zero()
+
 local POD = 0
 local FAR = 0
 local CSI = 0
 local correlation = 0
 local rainRmse = 0
+
 for iter = 1, opt.maxTestIter do
     local sample = datasetSeq[iter]
     local data = sample[1]  
@@ -70,20 +89,42 @@ for iter = 1, opt.maxTestIter do
     end
 
     local output = dec:forward(inputDecTable)
-
+    
     local loss = criterion:updateOutput(output, target)
     log.info('@loss ', loss, ' iter ', iter, ' / ', opt.maxTestIter)
-    local scores = SkillScore(output[opt.outputSeqLen], target[opt.outputSeqLen], opt.threthold)
+    
+    scores = SkillScore(scores, output, target, opt.threthold)
     -- POD = (POD + scores.POD) / 2
     -- FAR = (FAR + scores.FAR) / 2
     -- CSI = (CSI + scores.CSI) / 2
     -- correlation = (correlation + scores.correlation) / 2
 
-    POD = scores.POD
-    FAR = scores.FAR
-    CSI = scores.CSI
-    correlation = scores.correlation
-    rainRmse = scores.rainRmse
-    log.info('@POD ', POD, ' FAR ', FAR, ' CSI ', CSI, ' correlation ', correlation, 'rainRmse', rainRmse)
+    POD = scores.POD[opt.outputSeqLen] / iter
+    FAR = scores.FAR[opt.outputSeqLen] / iter
+    CSI = scores.CSI[opt.outputSeqLen] / iter
+    correlation = scores.correlation[opt.outputSeqLen] / iter
+    rainRmse = scores.rainRmse[opt.outputSeqLen] / iter
+    if(math.fmod(iter, opt.testSaveIter) == 0) then
+        log.trace('[saveimg] input, output and target save to %s', opt.testSaveDir)
+        OutputToImage(inputEncTable, iter, 'input', opt.testSaveDir)
+        OutputToImage(output, iter, 'output', opt.testSaveDir)
+        OutputToImage(target, iter, 'target', opt.testSaveDir)
+    end
+
+
+    log.info(string.format("iter: %d POD %.3f \t FAR %.3f \t CSI %.3f \t correlation %.3f \t rainRmse %.3f", iter, POD, FAR, CSI, correlation, rainRmse))
 end
 
+allPOD = scores.POD:div(opt.maxTestIter)
+allFAR = scores.FAR:div(opt.maxTestIter)
+allCSI = scores.CSI:div(opt.maxTestIter)
+allCorrelation = scores.correlation:div(opt.maxTestIter)
+allRainRmse = scores.rainRmse:div(opt.maxTestIter)
+
+
+log.info("POD: ", allPOD)
+log.info("FAR: ", allFAR)
+log.info("CSI; ", allCSI)
+log.info("correlation: ", allCorrelation)
+log.info("rainRmse: ", allCorrelation)
+log.info("@done evaluate")
