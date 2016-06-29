@@ -6,12 +6,13 @@
   kc  - convolutional filter size to convolve input
   km  - convolutional filter size to convolve cell; usually km > kc  
 --]]
+
 local _ = require 'moses'
 require 'nn'
-require 'cunn'
+require 'utils'
 local log = loadfile("log.lua")()
 local backend = nn
-local ConvLSTM, parent = torch.class('nn.ConvLSTM', 'nn.LSTM')
+local ConvLSTM, parent = torch.class('nn.ConvLSTM', 'nn.Container')
 
 function ConvLSTM:__init(inputSize, outputSize, rho, kc, km, stride, batchSize)
     self.kc = kc
@@ -20,13 +21,17 @@ function ConvLSTM:__init(inputSize, outputSize, rho, kc, km, stride, batchSize)
     self.padm = torch.floor(km / 2)
     self.stride = stride or 1
     self.batchSize = batchSize or nil
-    parent.__init(self, inputSize, outputSize, rho or 10)
-
+    self.inputSize = inputSize
+    self.outputSize = outputSize
+    self.zeroTensor = torch.Tensor()
     log.trace("[ConvLSTM] init input & outputSize ", self.inputSize, self.outputSize, 
     " kernel size ", self.kc, self.km, 
     "stride ", self.stride, 
     "padding ", self.padc, self.padm,
     "batchSize ", self.batchSize)
+    self.modules = {}
+    self.module = self:buildModel()
+    table.insert(self.modules, self.module)
 end
 
 -------------------------- factory methods -----------------------------
@@ -162,10 +167,10 @@ function ConvLSTM:buildModel()
    -- Input is : {input(t), output(t-1), cell(t-1)}
    log.trace("[ConvLSTM] start buildModel")
 
-   self.cell = self:buildcell()
+   local cell = self:buildcell()
     
    local concat = nn.ConcatTable()
-   concat:add(nn.NarrowTable(1,2)):add(self.cell)   
+   concat:add(nn.NarrowTable(1,2)):add(cell)   
 
    -- < add to model >
    local model = nn.Sequential()
@@ -200,47 +205,61 @@ function ConvLSTM:buildModel()
 end
 
 function ConvLSTM:updateOutput(input)
-   local prevOutput, prevCell
-   
-   if self.step == 1 then
-      prevOutput = self.userPrevOutput or self.zeroTensor
-      prevCell = self.userPrevCell or self.zeroTensor
-      if self.batchSize then
-         self.zeroTensor:resize(self.batchSize, self.outputSize, input:size(3), input:size(4)):zero()
-      else
-         self.zeroTensor:resize(self.outputSize,input:size(2),input:size(3)):zero()
-      end
-   else
-      -- previous output and memory of this module
-      prevOutput = self.output
-      prevCell   = self.cell
+   log.trace('[ConvLSTM] updateOutput ')
+   if(not self.prevOutput) then
+       log.trace('[ConvLSTM] no memory')
+       self.preCell = prevCell
+       self.prevOutput = prevOutput
    end
-      
+
+   self.prevOutput = self.prevOutput or self.zeroTensor
+   self.prevCell = self.prevCell or self.zeroTensor
+
+
+
+   if self.batchSize then
+       self.zeroTensor:resize(self.batchSize, self.outputSize, input:size(3), input:size(4)):zero()
+   else
+       self.zeroTensor:resize(self.outputSize,input:size(2),input:size(3)):zero()
+   end
+
    -- output(t), cell(t) = lstm{input(t), output(t-1), cell(t-1)}
-   local output, cell
-   if self.train ~= false then
-      self:recycle()
-      local recurrentModule = self:getStepModule(self.step)
-      -- the actual forward propagation
-      output, cell = unpack(recurrentModule:updateOutput{input, prevOutput, prevCell})
-   else
-      output, cell = unpack(self.recurrentModule:updateOutput{input, prevOutput, prevCell})
-   end
-   
-   self.outputs[self.step] = output
-   self.cells[self.step] = cell
-   
-   self.output = output
-   self.cell = cell
-   
-   self.step = self.step + 1
-   self.gradPrevOutput = nil
-   self.updateGradInputStep = nil
-   self.accGradParametersStep = nil
-   self.gradParametersAccumulated = false
+
+   self.output, self.cell = unpack(self.module:updateOutput({input, self.prevOutput, self.prevCell}))
+   assert(self.output)
+   assert(self.cell)
+   -- self.prevCell = nil
    -- note that we don't return the cell, just the output
    return self.output
 end
+function ConvLSTM:updateGradInput(input, gradOutput)
+
+    self.gradCell = self.gradPrevCell or torch.Tensor():resizeAs(self.cell)
+
+    log.trace(string.format('[ConvLSTM] updateGradInput get input %f prevOutput %f, prevCell %f', input:mean(), self.prevOutput:mean(), self.prevCell:mean()))         
+    self.gradInput, gradPrevOutput, gradPrevCell = unpack(
+        self.module:updateGradInput(
+            {input, self.prevOutput, self.prevCell}, 
+            {gradOutput, self.gradCell})
+            )
+
+    return self.gradInput
+end
+
+function ConvLSTM:accGradParameters(input, gradOutput)
+       log.trace(string.format('[ConvLSTM] accGradParameters: input table:%f, %f, %f ', input:mean(), self.prevOutput:mean(), self.prevCell:mean()))
+
+       log.trace(string.format('[ConvLSTM] accGradParameters: grad table: %f, %f ', gradOutput:mean(), self.gradCell:mean()))
+
+       self.module:accGradParameters(
+            {input, self.prevOutput, self.prevCell}, 
+            {gradOutput, self.gradCell})
+
+       local para, grad = self.module:getParameters()
+       log.trace(string.format('[ConvLSTM] update loss of cell %f and output %f gradient %f ', self.gradCell:mean(), gradOutput:mean(), grad:mean()))
+
+end
+
 
 function ConvLSTM:initBias(forgetBias, otherBias)
   local fBias = forgetBias or 1
@@ -250,3 +269,11 @@ function ConvLSTM:initBias(forgetBias, otherBias)
   self.cellGate.modules[2].modules[1].bias:fill(oBias)
   self.forgetGate.modules[1].modules[1].bias:fill(fBias)
 end
+
+function ConvLSTM:clearMemory()
+    if(torch.isTensor(self.cell)) then
+        self.cell = nil 
+    end
+end
+
+

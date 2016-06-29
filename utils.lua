@@ -1,8 +1,30 @@
 require 'image'
 local log = loadfile('log.lua')()
 
+
+function startTrainUtils()
+    if not paths.dirp(opt.saveDirTrainImg) then
+        os.execute('mkdir -p ' .. opt.saveDirTrainImg)
+    end
+    opt.imgDir = opt.saveDirTrainImg
+    log.info('[init] start training, img save to ', opt.imgDir)
+    opt.init = true
+end
+
+function startTestUtils()
+    if not paths.dirp(opt.testLogDir) then
+        os.execute('mkdir -p ' .. opt.testLogDir)
+    end
+    if not paths.dirp(opt.saveDirTestImg) then
+        os.execute('mkdir -p ' .. opt.saveDirTestImg)
+    end
+    opt.imgDir = opt.saveDirTestImg
+    log.info('[init] start testing, img save to ', opt.imgDir)
+    opt.init = true
+end
+
 function OutputToImage(output, iter, name, saveDir)
-    local saveDir = saveDir or opt.saveDir
+    local saveDir = saveDir or opt.imgDir
     -- output: table, size == outputSeqLength
     assert(type(output) == 'table')
     local output_batch
@@ -21,6 +43,13 @@ function OutputToImage(output, iter, name, saveDir)
     end
 end
 
+function TensorToImage(img, iter, name, saveDir)
+    local saveDir = saveDir or opt.imgDir
+    assert(torch.isTensor(img))
+    assert(img:dim() == 3 or img:dim() == 2)
+    image.save(saveDir..'it'..tostring(iter)..name..'n_'..tostring(iter)..'.png', img:div(img:max()))
+
+end
 function WeightInit(net)
     log.trace('[WeightInit]')    
     net:reset(Xavier(net.nInputPlane * net.kH * net.kW, 
@@ -82,6 +111,7 @@ end
 function SaveModel(model, modelname, iter)
     local emptymodel = model:clone('weight', 'bias'):float()
     local filename = opt.modelDir..modelname..'_iter_'..tostring(iter)..'.bin' 
+    -- clearState(emptyModel)
     torch.save(filename, emptymodel)
     log.info('current model is saved as', filename)
 end
@@ -190,3 +220,17 @@ function backwardConnect(enc, dec)
         end
     end
 end
+
+function clearState(model)
+    if model == nil then
+        log.error('[clearState] get nil model')
+        return model
+    end
+    local conv = model:findModules(opt.backend..'.SpatialConvolution')
+    log.trace('[clearState] numOfConv: ', table.getn(conv))
+    for i = 1, #conv do
+        conv[i].finput = nil
+    end
+end
+
+

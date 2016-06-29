@@ -10,30 +10,47 @@ local _ = require 'moses'
 require 'nn'
 require 'cunn'
 local log = loadfile("log.lua")()
-local backend = nn
-local ConvLSTM, parent = torch.class('nn.ConvLSTM', 'nn.LSTM')
+local backend_name = 'nn'
 
-function ConvLSTM:__init(inputSize, outputSize, rho, kc, km, stride, batchSize)
-    self.kc = kc
-    self.km = km
-    self.padc = torch.floor(kc / 2)
-    self.padm = torch.floor(km / 2)
-    self.stride = stride or 1
-    self.batchSize = batchSize or nil
-    parent.__init(self, inputSize, outputSize, rho or 10)
+local backend
+if backend_name == 'cudnn' then
+  require 'cudnn'
+  backend = cudnn
+else
+  backend = nn
+end
 
-    log.trace("[ConvLSTM] init input & outputSize ", self.inputSize, self.outputSize, 
-    " kernel size ", self.kc, self.km, 
-    "stride ", self.stride, 
-    "padding ", self.padc, self.padm,
-    "batchSize ", self.batchSize)
+local ConvLSTMnPeep, parent = torch.class('nn.ConvLSTMnPeep', 'nn.LSTM')
+
+function ConvLSTMnPeep:__init(inputSize, outputSize, rho, kc, km, stride, batchSize)
+
+   log.trace("[ConvLSTMnPeep] init input & outputSize ", inputSize, outputSize, 
+            " kernel size ", kc, km, 
+            "stride ", stride, 
+            "padding ", padc, padm,
+            "rho ", rho,
+            "batchSize ", batchSize)
+   self.kc = kc
+   self.km = km
+   self.padc = torch.floor(kc / 2)
+   self.padm = torch.floor(km / 2)
+   self.stride = stride or 1
+   self.batchSize = batchSize or nil
+   parent.__init(self, inputSize, outputSize, rho or 10)
+
+   log.trace("[ConvLSTMnPeep] init input & outputSize ", self.inputSize, self.outputSize, 
+            " kernel size ", self.kc, self.km, 
+            "stride ", self.stride, 
+            "padding ", self.padc, self.padm,
+            "batchSize ", self.batchSize)
 end
 
 -------------------------- factory methods -----------------------------
-function ConvLSTM:buildGateIF()
+function ConvLSTMnPeep:buildGateIF()
    -- Note : Input is : {input(t), output(t-1), cell(t-1)}
-   log.trace("[ConvLSTM] start build GateIF")
-   gate = nn.Sequential()
+   log.trace("[ConvLSTMnPeep] start build GateIF")
+   local gate = nn.Sequential()
+   gate:add(nn.NarrowTable(1,2))
    local input2gate = backend.SpatialConvolution(self.inputSize, self.outputSize, self.kc, self.kc, self.stride, self.stride, self.padc, self.padc)
    local output2gate = backend.SpatialConvolution(self.outputSize, self.outputSize, self.km, self.km, self.stride, self.stride, self.padm, self.padm)
    WeightInit(input2gate)
@@ -42,21 +59,21 @@ function ConvLSTM:buildGateIF()
    output2gate:noBias()
 
    -- local cell2gate = nn.HadamardMul(self.inputSize, 1, 1) -- weight = inputSize x 1 x 1
-   local cell2gate = backend.SpatialConvolution(self.outputSize, self.outputSize, 1, 1, self.stride, self.stride, 0, 0) -- weight = inputSize x 1 x 1
-   local p, gp = cell2gate:getParameters()
-   p = p:fill(0)
+--   local cell2gate = backend.SpatialConvolution(self.outputSize, self.outputSize, 1, 1, self.stride, self.stride, 0, 0) -- weight = inputSize x 1 x 1
+--   local p, gp = cell2gate:getParameters()
+--   p = p:fill(0)
    local para = nn.ParallelTable()
-   para:add(input2gate):add(output2gate):add(cell2gate)
+   para:add(input2gate):add(output2gate)
    gate:add(para)
    gate:add(backend.CAddTable())
    gate:add(backend.Sigmoid())
-   log.trace("[ConvLSTM] @done build GateIF")
+   log.trace("[ConvLSTMnPeep] @done build GateIF")
    return gate
 end
 
-function ConvLSTM:buildGate()
+function ConvLSTMnPeep:buildGate()
    -- Note : Input is : {input(t), output(t-1), cell(t-1)}
-   log.trace("[ConvLSTM] start build GateIF")
+   log.trace("[ConvLSTMnPeep] start build GateIF")
    local gate = nn.Sequential()
    local input2gate = backend.SpatialConvolution(self.inputSize, self.outputSize, self.kc, self.kc, self.stride, self.stride, self.padc, self.padc)
    local output2gate = backend.SpatialConvolution(self.outputSize, self.outputSize, self.km, self.km, self.stride, self.stride, self.padm, self.padm)
@@ -68,35 +85,37 @@ function ConvLSTM:buildGate()
    -- local cell2gate = nn.HadamardMul(self.inputSize, 1, 1) -- weight = inputSize x 1 x 1
    -- local cell2gate = backend.SpatialConvolution(self.outputSize, self.outputSize, 1, 1, self.stride, self.stride, 0, 0) -- weight = inputSize x 1 x 1
    -- local p, gp = cell2gate:getParameters()
-   p = p:fill(0) -- peephole's weight always set to zero at the begining
+   p = p:fill(0)
    local para = nn.ParallelTable()
    para:add(input2gate):add(output2gate):add(cell2gate)
    gate:add(para)
    gate:add(backend.CAddTable())
    gate:add(backend.Sigmoid())
-   log.trace("[ConvLSTM] @done build GateIF")
+   log.trace("[ConvLSTMnPeep] @done build GateIF")
    return gate
 end
 
-function ConvLSTM:buildInputGate()
+
+
+function ConvLSTMnPeep:buildInputGate()
    -- i_t = sigmoid(W * x_t + W * h_t−1 + W o c_t−1 + bi)
-   log.trace("[ConvLSTM] start build input gate")
+   log.trace("[ConvLSTMnPeep] start build input gate")
    self.inputGate = self:buildGateIF()
    return self.inputGate
 end
 
-function ConvLSTM:buildForgetGate()
+function ConvLSTMnPeep:buildForgetGate()
    -- f_t = sigmoid(W * x_t + W * h_t−1 + W o c_t−1 + bf)
-   log.trace("[ConvLSTM] start build forget gate")
+   log.trace("[ConvLSTMnPeep] start build forget gate")
    self.forgetGate = self:buildGateIF()
    return self.forgetGate
 end
 
 
-function ConvLSTM:buildcellGate()
+function ConvLSTMnPeep:buildcellGate()
    -- Input is :{x_t, h_t-1, c-t-1}
    -- output is : Tanh(W * x-t + W * h_t-1 + b) = cellGate
-   log.trace("[ConvLSTM] start buildcellGate")
+   log.trace("[ConvLSTMnPeep] start buildcellGate")
    local hidden = nn.Sequential()
    hidden:add(nn.NarrowTable(1,2))
    local input2gate = backend.SpatialConvolution(self.inputSize, self.outputSize, self.kc, self.kc, self.stride, self.stride, self.padc, self.padc)
@@ -110,15 +129,15 @@ function ConvLSTM:buildcellGate()
    hidden:add(para)
    hidden:add(nn.CAddTable())
    hidden:add(backend.Tanh())
-   log.trace("[ConvLSTM] @done buildcellGate")
+   log.trace("[ConvLSTMnPeep] @done buildcellGate")
 
    return hidden
 end
 
-function ConvLSTM:buildcell()
+function ConvLSTMnPeep:buildcell()
    -- Input is : {input(t), output(t-1), cell(t-1)}
    -- Output is : forgetGate_t * c_t-1 + x_t * cellGate = cell_t
-   log.trace("[ConvLSTM] start buildcell")
+   log.trace("[ConvLSTMnPeep] start buildcell")
    self.inputGate = self:buildInputGate() 
    self.forgetGate = self:buildForgetGate()
    self.cellGate = self:buildcellGate()
@@ -147,20 +166,20 @@ function ConvLSTM:buildcell()
    cell:add(concat3)
    cell:add(nn.CAddTable())
    self.cell = cell
-   log.trace("[ConvLSTM] @done buildcell")
+   log.trace("[ConvLSTMnPeep] @done buildcell")
    return cell
 end   
    
-function ConvLSTM:buildOutputGate()
+function ConvLSTMnPeep:buildOutputGate()
    self.outputGate = self:buildGate()
    return self.outputGate
 end
 
 -- cell(t) = cell{input, output(t-1), cell(t-1)}
 -- output of Model is table : {output(t), cell(t)} 
-function ConvLSTM:buildModel()
+function ConvLSTMnPeep:buildModel()
    -- Input is : {input(t), output(t-1), cell(t-1)}
-   log.trace("[ConvLSTM] start buildModel")
+   log.trace("[ConvLSTMnPeep] start buildModel")
 
    self.cell = self:buildcell()
     
@@ -199,7 +218,7 @@ function ConvLSTM:buildModel()
    return model
 end
 
-function ConvLSTM:updateOutput(input)
+function ConvLSTMnPeep:updateOutput(input)
    local prevOutput, prevCell
    
    if self.step == 1 then
@@ -242,11 +261,11 @@ function ConvLSTM:updateOutput(input)
    return self.output
 end
 
-function ConvLSTM:initBias(forgetBias, otherBias)
+function ConvLSTMnPeep:initBias(forgetBias, otherBias)
   local fBias = forgetBias or 1
   local oBias = otherBias or 0
-  self.inputGate.modules[1].modules[1].bias:fill(oBias)
-  self.outputGate.modules[1].modules[1].bias:fill(oBias)
+  self.inputGate.modules[2].modules[1].bias:fill(oBias)
+  self.outputGate.modules[2].modules[1].bias:fill(oBias)
   self.cellGate.modules[2].modules[1].bias:fill(oBias)
-  self.forgetGate.modules[1].modules[1].bias:fill(fBias)
+  self.forgetGate.modules[2].modules[1].bias:fill(fBias)
 end

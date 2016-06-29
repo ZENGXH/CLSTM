@@ -6,26 +6,44 @@ require 'paths'
 require 'rnn'
 require 'torch'
 require 'ConvLSTM'
-require 'HadamardMul'
 require 'utils'
 require 'cunn'
 require 'cutorch'
--- require 'BilinearSamplerBHWD'
--- require 'display_flow'
--- torch.setdefaulttensortype('torch.FloatTensor')
--- require 'DenseTransformer2D'
--- require 'SmoothHuberPenalty'
--- require 'encoder'
--- require 'decoder'
--- require 'flow'
 
-local log = loadfile('log.lua')()
+-- init configure
 paths.dofile('opts_hko.lua')
-dofile('model_hko.lua') 
+
+-- init log
+local log = loadfile('log.lua')()
+log.outfile = 'train_log'
 log.level = opt.trainLogLevel or "trace"
-SaveModel(enc, 'enc', iter)
-SaveModel(dec, 'dec', iter)
- 
+log.info('[init] log level: ', log.level, ' output to file ', log.outfile)
+startTrainUtils()
+print(opt)
+assert(opt.init)
+
+-- init model
+dofile('model_hko.lua') 
+
+local backend_name = opt.backend or 'cudnn'
+
+local backend
+if backend_name == 'cudnn' then
+  log.info('[init] using cudnn backend')
+  require 'cudnn'
+  backend = cudnn
+  enc = cudnn.convert(enc, cudnn)
+  dec = cudnn.convert(dec, cudnn)
+  cudnn.fastest = true 
+else
+  backend = nn
+  log.info('[init] NOT using cudnn backend')
+end
+
+-- SaveModel(enc, 'enc', iter)
+-- SaveModel(dec, 'dec', iter)
+
+-- init criterion
 local criterion = nn.SequencerCriterion(nn.MSECriterion())
 if opt.useGpu then
     require 'cunn'
@@ -34,6 +52,7 @@ end
 
 local err = 0
 
+-- start train
 local function main()
   -- cutorch.setDevice(5)
   log.trace("load opti done@")
@@ -79,8 +98,9 @@ local function main()
       log.trace('[fw] forward encoder done@ output')
       forwardConnect(enc, dec)
       inputDecTensor = torch.Tensor(opt.batchSize, opt.imageDepth, opt.imageHeight, opt.imageWidth):fill(0)
+
       if opt.useGpu then
-          inputDecTensor = inputDecTensor:cuda()
+        inputDecTensor = inputDecTensor:cuda()
       end
 
       local inputDecTable = {}
@@ -114,6 +134,7 @@ local function main()
 
 
       gradOutput = criterion:updateGradInput(output, target)
+
       collectgarbage()
       local gradDec = dec:backward(inputDecTable, gradOutput)
       backwardConnect(enc, dec)
@@ -140,7 +161,7 @@ local function main()
           OutputToImage(output, iter, 'output')
       end
 
-      if(math.fmod(iter, 1000) == 0) then
+      if(math.fmod(iter, opt.modelSaveIter) == 0) then
           SaveModel(enc, 'enc', iter)
           SaveModel(dec, 'dec', iter)
       end

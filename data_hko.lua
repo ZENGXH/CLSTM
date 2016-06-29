@@ -1,6 +1,9 @@
 require 'image'
 local log = loadfile('log.lua')()
 log.level = opt.dataLoaderLogLevel or "trace"
+opt.selectStep = opt.selectStep or 1
+log.info('[SelectSeq] selectStep set as ', opt.selectStep)
+
 
 function getdataSeqHko(mode)
    -- local data = torch.DiskFile(datafile,'r'):readObject()
@@ -26,7 +29,7 @@ function getdataSeqHko(mode)
     end
 
     log.info("[init] read data into fileList table, size in total: ", table.getn(fileList))
-    log.info("[init] size of input batch ", opt.batchSize, opt.nSeq, opt.imageDepth, opt.imageHeight, opt.imageWidth)
+    log.info("[init] size of input batch ", opt.batchSize, opt.totalSeqLen, opt.imageDepth, opt.imageHeight, opt.imageWidth)
 
     function datasetSeq:size()
         return table.getn(fileList)
@@ -37,7 +40,7 @@ function getdataSeqHko(mode)
     function datasetSeq:SelectSeq()
         log.trace("SelectSeq")
 
-        local inputBatch = torch.Tensor(opt.batchSize, opt.nSeq, opt.imageDepth, opt.imageHeight, opt.imageWidth)
+        local inputBatch = torch.Tensor(opt.batchSize, opt.totalSeqLen, opt.imageDepth, opt.imageHeight, opt.imageWidth)
 
         for batch_ind = 1, opt.batchSize do -- filling one batch one by one
             -- math.ceil(torch.uniform(1e-12, nsamples)) 
@@ -46,7 +49,7 @@ function getdataSeqHko(mode)
             -- read the 20 frames starting from i
             for frames_id = 1, opt.totalSeqLen do
                -- local imageName = opt.dataPath..fileList[ (batch_ind - 1 + ind) * opt.totalSeqLen + frames_id]
-               local imageName = opt.dataPath..fileList[ (batch_ind - 1) + (ind - 1) * opt.batchSize  + frames_id]
+               local imageName = opt.dataPath..fileList[ (batch_ind - 1) + (ind - 1) * opt.batchSize  + ((frames_id - 1) * opt.selectStep + 1) ]
                inputBatch[batch_ind][frames_id] = image.load(imageName)
                if frames_id == 1 then
                    log.trace("[SelectSeq] load batch#", batch_ind, " seq#",  opt.totalSeqLen, " from ", imageName)
@@ -61,7 +64,7 @@ function getdataSeqHko(mode)
          return inputBatch, ind
       end
 
-   dataSample = torch.Tensor(opt.batchSize, opt.nSeq, opt.imageDepth, opt.imageHeight, opt.imageWidth)
+   dataSample = torch.Tensor(opt.batchSize, opt.totalSeqLen, opt.imageDepth, opt.imageHeight, opt.imageWidth)
    
    setmetatable(datasetSeq, {__index = function(self, index)
                                        local sample, i = self:SelectSeq()

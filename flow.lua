@@ -50,4 +50,6 @@ flow:add(nn.Clamp(opt.dmin, opt.dmax))
 flow:add(nn.AffineGridGeneratorOpticalFlow2D(opt.memorySizeH,opt.memorySizeW)) -- apply transformations to obtain new grid
 
 -- transpose to prepare grid in bhwd format for sampler
-flow:add(nn.Transpose({1,3},{1,2}))
+flow:add(nn.Transpose({1,3},{1,2})) -- D H W -> W H D -> H W D
+flow:add(nn.View(opt.batchSize, opt.memorySizeH, opt.memorySizeW, 2))
+

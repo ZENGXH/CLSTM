@@ -11,16 +11,11 @@ require 'cutorch'
 local log = loadfile('log.lua')()
 paths.dofile('opts_hko.lua')
 log.level = opt.evalLogLevel or "info"
-if not paths.dirp(opt.testLogDir) then
-    os.execute('mkdir -p ' .. opt.testLogDir)
-end
-if not paths.dirp(opt.testSaveDir) then
-    os.execute('mkdir -p ' .. opt.testSaveDir)
-end
-
 paths.dofile('data_hko.lua')
 log.outfile = opt.testLogDir..'eval_hko_log'
 
+startTestUtils()
+assert(opt.init)
 opt.useGpu = false 
 log.info('[init] useGpu: ', opt.useGpu)
 
@@ -105,10 +100,10 @@ for iter = 1, opt.maxTestIter do
     correlation = scores.correlation[opt.outputSeqLen] / iter
     rainRmse = scores.rainRmse[opt.outputSeqLen] / iter
     if(math.fmod(iter, opt.testSaveIter) == 0) then
-        log.trace('[saveimg] input, output and target save to %s', opt.testSaveDir)
-        OutputToImage(inputEncTable, iter, 'input', opt.testSaveDir)
-        OutputToImage(output, iter, 'output', opt.testSaveDir)
-        OutputToImage(target, iter, 'target', opt.testSaveDir)
+        log.trace('[saveimg] input, output and target save to %s')
+        OutputToImage(inputEncTable, iter, 'input')
+        OutputToImage(output, iter, 'output')
+        OutputToImage(target, iter, 'target')
     end
 
 
