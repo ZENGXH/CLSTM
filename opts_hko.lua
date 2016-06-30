@@ -39,6 +39,7 @@ opt.kernelSize  = 3 -- size of kernels in encoder/decoder layers
 opt.padding  = torch.floor(opt.kernelSize / 2) -- pad input before convolutions
 opt.stride = 1
 
+opt.gradClip = 50
 -- training confirguration
 opt.modelFile = 'model_hko_2toconv.lua'
 opt.trainLogLevel = "info"
@@ -46,7 +47,6 @@ opt.saveIter = 20 -- save img
 opt.displayIter = 100 -- show loss
 opt.modelSaveIter = 2000
 opt.maxIter = 40000
-opt.gradClip = 50
 opt.lr = 1e-3
 opt.saveDir = './' -- '/mnt/ficusengland/ssd1/xhzeng2/hko_lstm_baseline_nopeep/'
 opt.saveDirTrainImg = opt.saveDir..'trainImg/'
@@ -55,6 +55,7 @@ opt.save = true -- save models
 opt.modelDir = opt.saveDir.."model/"
 
 -- for test 
+opt.modelFlow = 'model/model_iter_2001.bin'
 opt.modelPara = opt.modelDir.."encDecpara_iter_6001.bin"
 opt.contIter = 6002
 opt.test = true

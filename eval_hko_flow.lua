@@ -7,6 +7,12 @@ require 'ConvLSTM'
 require 'utils'
 require 'cunn'
 require 'cutorch'
+require 'ConvLSTM'
+require 'utils'
+require 'flow'
+require 'BilinearSamplerBHWD'
+require 'DenseTransformer2D' -- AffineGridGeneratorOpticalFlow2D
+require 'display_flow'
 
 local evalLog = loadfile('log.lua')()
 paths.dofile('opts_hko.lua')
@@ -16,7 +22,7 @@ evalLog.outfile = opt.testLogDir..'eval_hko_log'
 
 startTestUtils()
 assert(opt.init)
-opt.useGpu = false 
+-- opt.useGpu = false 
 evalLog.info('[init] useGpu: ', opt.useGpu)
 
 -- set criterion
@@ -30,16 +36,23 @@ evalLog.info('[init] set criterion ', criterion)
 local err = 0
 
 -- load model
+evalLog.info(string.format("[init] ==> evaluating hko flow model: %s ", opt.modelFlow))
+if opt.useGpu and opt.backend == 'cudnn' then
+    require 'cudnn'
+end
 local model = torch.load(opt.modelFlow)
 local lstm = model.modules[2].modules[2].modules[1]
+
+evalLog.info('[test] model: ', model)
+evalLog.info('[test] lstm ', lstm)
 local enc_conv = model.modules[1]
 local branch_memory = nn.Sequential():add(enc_conv):add(lstm)
-model = model:double()
+-- model = model:double()
 if opt.useGpu then
     model = model:cuda()
 end
-evalLog.info(string.format("[init] ==> evaluating hko flow model: %s ", opt.modelFlow))
 
+evalLog.info('branch_memory: ', branch_memory)
 -- clear grad 
 model:zeroGradParameters()
 
@@ -78,7 +91,7 @@ for iter = 1, opt.maxTestIter do
 
     -- first memorize the first opt.inputSeqLen - 1 frames
       for i = 1, opt.inputSeqLen - 1 do 
-          log.trace('[branch_memory] input data for encoder', i)
+          evalLog.trace('[branch_memory] input data for encoder', i)
           local framesMemory = data[{{}, {i}, {}, {}, {}}]:select(2, 1)
           branch_memory:updateOutput(framesMemory)
           table.insert(inputTable, framesMemory)
@@ -100,15 +113,12 @@ for iter = 1, opt.maxTestIter do
         input = output
         local outputTensor = output:clone()
         table.insert(outputTable, outputTensor)
-        log.trace(string.format('[train] iter %d, frames id %d, loss %.4f', iter, i, loss))
+        evalLog.trace(string.format('[train] iter %d, frames id %d, loss %.4f', iter, i, f))
 
         opticalFlow  = model.modules[2].modules[2].modules[2].modules[7].output
         local imflow = flow2colour(opticalFlow)
         table.insert(flowTable, imflow)
     end
-
-
-
     -- calculate scores 
     scores = SkillScore(scores, outputTable, targetTable, opt.threthold)
     POD = scores.POD[opt.outputSeqLen] / iter
@@ -116,7 +126,7 @@ for iter = 1, opt.maxTestIter do
     CSI = scores.CSI[opt.outputSeqLen] / iter
     correlation = scores.correlation[opt.outputSeqLen] / iter
     rainRmse = scores.rainRmse[opt.outputSeqLen] / iter
-
+    
     if(math.fmod(iter, opt.testSaveIter) == 1) then
         evalLog.trace('[saveimg] input, output and target save to %s')
         OutputToImage(inputEncTable, iter, 'input')
@@ -124,8 +134,7 @@ for iter = 1, opt.maxTestIter do
         OutputToImage(target, iter, 'target')
     end
 
-
-    evalLog.info(string.format("iter: %d POD %.3f \t FAR %.3f \t CSI %.3f \t correlation %.3f \t rainRmse %.3f", iter, POD, FAR, CSI, correlation, rainRmse))
+    evalLog.info(string.format("iter: %d POD %.3f \t FAR %.3f \t CSI %.3f \t correlation %.3f \t rainRmse %.3f loss %.4f", iter, POD, FAR, CSI, correlation, rainRmse, f / (opt.outputSeqLen * iter) ))
 end
 
 allPOD = scores.POD:div(opt.maxTestIter)
@@ -133,7 +142,6 @@ allFAR = scores.FAR:div(opt.maxTestIter)
 allCSI = scores.CSI:div(opt.maxTestIter)
 allCorrelation = scores.correlation:div(opt.maxTestIter)
 allRainRmse = scores.rainRmse:div(opt.maxTestIter)
-
 
 evalLog.info("POD: ", allPOD)
 evalLog.info("FAR: ", allFAR)

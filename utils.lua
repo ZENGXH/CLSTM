@@ -48,8 +48,14 @@ function TensorToImage(img, iter, name, saveDir)
     assert(torch.isTensor(img))
     assert(img:dim() == 3 or img:dim() == 2)
     image.save(saveDir..'it'..tostring(iter)..name..'n_'..tostring(iter)..'.png', img:div(img:max()))
-
 end
+function FlowTableToImage(output, iter, name, saveDir)
+    local saveDir = saveDir or opt.imgDir
+    for i = 1, #output do
+        TensorToImage(output[i], iter, name..'n_'..tostring(i), saveDir)
+    end
+end
+
 function WeightInit(net)
     log.trace('[WeightInit]')    
     net:reset(Xavier(net.nInputPlane * net.kH * net.kW, 
@@ -95,7 +101,7 @@ function _savegroup(figure, name, iter, saveDir)
     else
         depth = 1
     end
-    local imgName = saveDir..timeStamp()..'-it-'..tostring(iter)..'-'..name..'.png'
+    local imgName = saveDir..'it-'..tostring(iter)..'-'..name..'.png'
     local img_group = image.toDisplayTensor{input = img,
                                             padding = 2,
                                             nrow = math.floor(math.sqrt(depth)),

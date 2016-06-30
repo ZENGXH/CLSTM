@@ -15,7 +15,7 @@ paths.dofile('opts_hko.lua')
 
 -- init log
 local log = loadfile('log.lua')()
-log.outfile = 'train_log'
+log.outfile = 'train_log_cont'
 log.level = opt.trainLogLevel or "trace"
 log.info('[init] log level: ', log.level, ' output to file ', log.outfile)
 startTrainUtils()
@@ -151,7 +151,7 @@ local function main()
       err = err + fs / opt.outputSeqLen
 
       if(math.fmod(iter, opt.displayIter) == 1) then
-          log.info(string.format('@loss %.4f, iter %d / %d, lr %.6f, param mean %.4f ', err / iter, iter, opt.maxIter, rmspropConf.learningRate, parameters:mean()))
+          log.info(string.format('@loss %.4f, iter %d / %d, lr %.6f, param mean %.4f ', err / (iter - opt.contIter + 1), iter, opt.maxIter, rmspropConf.learningRate, parameters:mean()))
       end
 
       if(math.fmod(iter, opt.saveIter) == 1) then

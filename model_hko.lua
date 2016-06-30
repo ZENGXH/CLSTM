@@ -28,8 +28,6 @@ enc:add(nn.Sequencer(encoder_0)):add(nn.Sequencer(encoder_1))
 -- dec:add(decoder_0):add(decoder_1)
 conv = nn.SpatialConvolution(opt.nFiltersMemory[2], opt.nFiltersMemory[1], 3, 3, 1, 1, 1, 1)
 
-decoderConv = nn.Sequential():add(decoder_1):add(conv)
-
 dec:add(nn.Sequencer(decoder_0))
     :add(nn.Sequencer(decoder_1))
     :add(nn.Sequencer(conv))
