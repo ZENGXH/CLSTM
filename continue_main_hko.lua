@@ -19,29 +19,40 @@ log.outfile = 'train_log'
 log.level = opt.trainLogLevel or "trace"
 log.info('[init] log level: ', log.level, ' output to file ', log.outfile)
 startTrainUtils()
-print(opt)
+log.info('opt: ', opt)
 assert(opt.init)
 
 -- init model
-dofile('model_hko.lua') 
+log.info('[cont] load model file: ', opt.modelFile)
+log.info('[cont] load model parameters: ', opt.modelPara)
+
+dofile(opt.modelFile)
+parameters, gradParameters = model:getParameters()
+log.trace('[cont] para of model init: ', parameters:sum())
+log.trace('[cont] continue from iter: ', opt.contIter)
+local para = torch.load(opt.modelPara):cuda()
+log.trace('[cont] para of model load: ', para:sum())
+parameters:fill(1)
+parameters:cmul(para)
+
+parameters, gradParameters = model:getParameters()
+local paraEnc, _ = enc:getParameters()
+local paraDec, _ = dec:getParameters()
+log.trace('[cont] para of enc + dec: ', paraEnc:sum(), paraDec:sum())
+log.trace('[cont] para of model after set: ', parameters:sum())
 
 local backend_name = opt.backend or 'cudnn'
-
-local backend
 if backend_name == 'cudnn' then
-  log.info('[init] using cudnn backend')
+  log.info('[cont] using cudnn backend')
   require 'cudnn'
   backend = cudnn
   enc = cudnn.convert(enc, cudnn)
   dec = cudnn.convert(dec, cudnn)
   cudnn.fastest = true 
 else
-  backend = nn
   log.info('[init] NOT using cudnn backend')
 end
 
--- SaveModel(enc, 'enc', iter)
--- SaveModel(dec, 'dec', iter)
 
 -- init criterion
 local criterion = nn.SequencerCriterion(nn.MSECriterion())
@@ -54,7 +65,7 @@ local err = 0
 
 -- start train
 local function main()
-  -- cutorch.setDevice(5)
+  cutorch.setDevice(3)
   log.trace("load opti done@")
   paths.dofile('data_hko.lua')
   log.trace("load data_hko done@")
@@ -93,18 +104,18 @@ local function main()
   end
 
   -- link enc and dec for update parameters
-  local model = nn.Sequential():add(enc):add(dec)
+  -- local model = nn.Sequential():add(enc):add(dec)
   parameters, grads = model:getParameters()
 
   -- init loss
   local err = 0
-  for iter = 1, opt.maxIter do
+  for iter = opt.contIter, opt.maxIter do
       -- define eval closure
       local inputEncTable = {}
       local target = {}
       local output
       local code
-      local feval = function() 
+      -- local  function feval() 
           enc:zeroGradParameters()
           dec:zeroGradParameters()
           local sample = datasetSeq[iter]
@@ -130,12 +141,14 @@ local function main()
           dec:backward(inputDecTable, gradOutput)
           backwardConnect(enc, dec)
           enc:backward(inputEncTable, zeroGradDec)
-        return loss, grads
-      end
-
-      _, fs = optim.rmsprop(feval, parameters, rmspropConf)
+          enc:updateParameters(opt.lr)
+          dec:updateParameters(opt.lr)
+          -- return loss, grads
+      -- end
+      fs = loss
+      -- _, fs = optim.rmsprop(feval, parameters, rmspropConf)
       -- fs = rmspropUpdate(feval, parametersEnc, parametersDec, rmspropConf) 
-      err = err + fs[1] / opt.outputSeqLen
+      err = err + fs / opt.outputSeqLen
 
       if(math.fmod(iter, opt.displayIter) == 1) then
           log.info(string.format('@loss %.4f, iter %d / %d, lr %.6f, param mean %.4f ', err / iter, iter, opt.maxIter, rmspropConf.learningRate, parameters:mean()))

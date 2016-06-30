@@ -14,19 +14,43 @@ log.level = opt.evalLogLevel or "info"
 paths.dofile('data_hko.lua')
 log.outfile = opt.testLogDir..'eval_hko_log'
 
+log.info('[init] load model file: ', opt.modelFile)
+log.info('[init] load model parameters: ', opt.modelPara)
+
+
+dofile(opt.modelFile)
+parameters, gradParameters = model:getParameters()
+log.trace('[init] para of model init: ', parameters:sum())
+
+local para = torch.load(opt.modelPara):cuda()
+log.trace('[init] para of model load: ', para:sum())
+parameters:fill(1)
+parameters:cmul(para)
+-- parameters = para:clone()
+
+parameters, gradParameters = model:getParameters()
+log.trace('[init] para of model after set: ', parameters:sum())
+
+local paraEnc, _ = enc:getParameters()
+local paraDec, _ = dec:getParameters()
+log.trace('[init] para of enc + dec: ', paraEnc:sum(), paraDec:sum())
+
 startTestUtils()
 assert(opt.init)
-opt.useGpu = false 
+opt.useGpu = true 
 log.info('[init] useGpu: ', opt.useGpu)
 
 local criterion = nn.SequencerCriterion(nn.MSECriterion())
 log.info('[init] set criterion ', criterion)
+
 if opt.useGpu then
     require 'cunn'
     criterion = criterion:cuda()
 end
-enc = torch.load(opt.modelEnc)
-dec = torch.load(opt.modelDec)
+-- local model = torch.load(opt.modelEncDec)
+local enc = model.modules[1]
+local dec = model.modules[2]
+
 enc = enc:double()
 dec = dec:double()
 if opt.useGpu then
@@ -36,6 +60,8 @@ end
 
 enc:zeroGradParameters()
 dec:zeroGradParameters()
+
+
 log.info(string.format("[init] ==> evaluating model: enc: %s, dec: %s", opt.modelEnc, opt.modelDec))
 datasetSeq = getdataSeqHko('test')
 
@@ -52,6 +78,16 @@ local CSI = 0
 local correlation = 0
 local rainRmse = 0
 
+-- prepare zero input for decoder:
+local inputDecTensor = torch.Tensor(opt.batchSize, opt.imageDepth, opt.imageHeight, opt.imageWidth):fill(0)
+if opt.useGpu then
+    inputDecTensor = inputDecTensor:cuda()
+end
+local inputDecTable = {}
+for i = 1, opt.outputSeqLen do
+    table.insert(inputDecTable, inputDecTensor)
+end
+local loss = 0
 for iter = 1, opt.maxTestIter do
     local sample = datasetSeq[iter]
     local data = sample[1]  
@@ -63,7 +99,6 @@ for iter = 1, opt.maxTestIter do
     for i = 1, opt.inputSeqLen do 
         table.insert(inputEncTable, data[{{}, {i}, {}, {}, {}}]:select(2,1))
     end
-
     local target = {}
     for i = 1, opt.outputSeqLen do
         table.insert(target, data[{{}, {opt.inputSeqLen + i}, {}, {}, {}}] )
@@ -71,43 +106,29 @@ for iter = 1, opt.maxTestIter do
 
     -- in shape (15, 8, 1, 100, 100)
     local output_enc = enc:forward(inputEncTable)
-    log.trace('[fw] forward encoder done@ output')
     forwardConnect(enc, dec)
-    inputDecTensor = torch.Tensor(opt.batchSize, opt.imageDepth, opt.imageHeight, opt.imageWidth):fill(0)
-    if opt.useGpu then
-        inputDecTensor = inputDecTensor:cuda()
-    end
-
-    local inputDecTable = {}
-    for i = 1, opt.outputSeqLen do
-        table.insert(inputDecTable, inputDecTensor)
-    end
-
     local output = dec:forward(inputDecTable)
-    
-    local loss = criterion:updateOutput(output, target)
-    log.info('@loss ', loss, ' iter ', iter, ' / ', opt.maxTestIter)
-    
     scores = SkillScore(scores, output, target, opt.threthold)
-    -- POD = (POD + scores.POD) / 2
-    -- FAR = (FAR + scores.FAR) / 2
-    -- CSI = (CSI + scores.CSI) / 2
-    -- correlation = (correlation + scores.correlation) / 2
 
     POD = scores.POD[opt.outputSeqLen] / iter
     FAR = scores.FAR[opt.outputSeqLen] / iter
     CSI = scores.CSI[opt.outputSeqLen] / iter
     correlation = scores.correlation[opt.outputSeqLen] / iter
     rainRmse = scores.rainRmse[opt.outputSeqLen] / iter
-    if(math.fmod(iter, opt.testSaveIter) == 0) then
-        log.trace('[saveimg] input, output and target save to %s')
+
+    if(math.fmod(iter, opt.testSaveIter) == 1) then
+        log.trace('[saveimg] input, output and target save to ', opt.imgDir)
         OutputToImage(inputEncTable, iter, 'input')
         OutputToImage(output, iter, 'output')
         OutputToImage(target, iter, 'target')
     end
+    
+    loss = loss + criterion:updateOutput(output, target) / opt.outputSeqLen
 
-
-    log.info(string.format("iter: %d POD %.3f \t FAR %.3f \t CSI %.3f \t correlation %.3f \t rainRmse %.3f", iter, POD, FAR, CSI, correlation, rainRmse))
+    if(math.fmod(iter, opt.scoreDisplayIter) == 1) then
+        log.info(string.format('@loss %.4f, iter %d / %d ', loss / iter, iter, opt.maxTestIter))
+        log.info(string.format("[score] POD %.3f \t FAR %.3f \t CSI %.3f \t correlation %.3f \t rainRmse %.3f", POD, FAR, CSI, correlation, rainRmse))
+    end
 end
 
 allPOD = scores.POD:div(opt.maxTestIter)

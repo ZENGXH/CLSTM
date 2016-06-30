@@ -78,7 +78,8 @@ function ViewCell(net, iter, name)
     end
 end
 
-function _savegroup(figure, name, iter)
+function _savegroup(figure, name, iter, saveDir)
+    local saveDir = saveDir or opt.imgDir
     local img = figure:clone()
     local depth
     if(type(figure) == 'table') then
@@ -94,8 +95,7 @@ function _savegroup(figure, name, iter)
     else
         depth = 1
     end
-    
-    local imgName = opt.saveDir..timeStamp()..'-it-'..tostring(iter)..'-'..name..'.png'
+    local imgName = saveDir..timeStamp()..'-it-'..tostring(iter)..'-'..name..'.png'
     local img_group = image.toDisplayTensor{input = img,
                                             padding = 2,
                                             nrow = math.floor(math.sqrt(depth)),
@@ -109,10 +109,12 @@ function timeStamp()
 end
 
 function SaveModel(model, modelname, iter)
-    local emptymodel = model:clone('weight', 'bias'):float()
-    local filename = opt.modelDir..modelname..'_iter_'..tostring(iter)..'.bin' 
+    local modelParameters, gradParameters = model:getParameters()
+    local paraCpu = modelParameters:float()
+
+    local filename = opt.modelDir..modelname..'para_iter_'..tostring(iter)..'.bin' 
     -- clearState(emptyModel)
-    torch.save(filename, emptymodel)
+    torch.save(filename, paraCpu)
     log.info('current model is saved as', filename)
 end
 
@@ -182,6 +184,7 @@ function SkillScoreSub(scores, prediction, truth, threshold, id)
 end
 
 function SkillScore(scores, prediction, truth, threshold)
+    -- prediction, truth are table
     local threshold = threshold or 0.5
     assert(type(prediction) == 'table')
     log.trace(string.format("eval all output in length: %d", opt.outputSeqLen))
@@ -233,4 +236,42 @@ function clearState(model)
     end
 end
 
+
+function rmspropUpdate(opfunc, xEnc, xDec, config, state)
+    -- (0) get/update state
+    log.trace(string.format('[rmspropUpdate] para of model: %.4f, %.4f', xEnc:mean(), xDec:mean()))
+
+    local config = config or {}
+    local state = state or config
+    local lr = config.learningRate or 1e-2
+    local alpha = config.alpha or 0.99
+    local epsilon = config.epsilon or 1e-8
+    local wd = config.weightDecay or 0
+
+    local fx, dfdxEnc, dfdxDec = opfunc(xT)
+    log.trace('[rmspropUpdate] opfunc run, fx = ')
+    -- enc:
+
+    -- (1) evaluate f(x) and df/dx
+        log.trace(string.format('[rmspropUpdate] eval dfdx mean = %.4f', dfdxEnc:mean()))
+        -- (2) weight decay
+        if wd ~= 0 then
+            dfdx:add(wd, x)
+        end
+        -- (3) initialize mean square values and square gradient storage
+        if not state.m then
+            state.m = torch.Tensor():typeAs(x):resizeAs(dfdx):fill(1)
+            state.tmp = torch.Tensor():typeAs(x):resizeAs(dfdx)
+        end
+
+        -- (4) calculate new (leaky) mean squared values
+        state.m:mul(alpha)
+        state.m:addcmul(1.0 - alpha, dfdx, dfdx)
+        -- (5) perform update
+        state.tmp:sqrt(state.m):add(epsilon)
+        x:addcdiv(-lr, dfdx, state.tmp)
+        -- return x*, f(x) before optimization
+
+    return  fx
+end
 
