@@ -36,23 +36,37 @@ evalLog.info('[init] set criterion ', criterion)
 local err = 0
 
 -- load model
-evalLog.info(string.format("[init] ==> evaluating hko flow model: %s ", opt.modelFlow))
+-- evalLog.info(string.format("[init] ==> evaluating hko flow model: %s ", opt.modelFlow))
 if opt.useGpu and opt.backend == 'cudnn' then
     require 'cudnn'
 end
-local model = torch.load(opt.modelFlow)
-local lstm = model.modules[2].modules[2].modules[1]
+-- local model = torch.load(opt.modelFlow)
+evalLog.info('[init] load model file: ', opt.modelFile)
+evalLog.info('[init] load model parameters: ', opt.modelPara)
+dofile(opt.modelFile)
+parameters, gradParameters = model:getParameters()
+evalLog.trace('[init] para of model init: ', parameters:sum())
+local para = torch.load(opt.modelPara):cuda()
+evalLog.trace('[init] para of model load: ', para:sum())
+parameters:fill(1):cmul(para)
 
+-- perform check:
+parameters, gradParameters = model:getParameters()
+evalLog.trace('[init] para of model after set: ', parameters:sum())
 evalLog.info('[test] model: ', model)
-evalLog.info('[test] lstm ', lstm)
+
+-- get module from model
 local enc_conv = model.modules[1]
-local branch_memory = nn.Sequential():add(enc_conv):add(lstm)
--- model = model:double()
+
+local lstm = model.modules[2].modules[2].modules[1]
+local branch_memory = nn.Sequential()
+branch_memory:add(enc_conv):add(lstm)
 if opt.useGpu then
     model = model:cuda()
 end
 
 evalLog.info('branch_memory: ', branch_memory)
+evalLog.info('[test] lstm ', lstm)
 -- clear grad 
 model:zeroGradParameters()
 
@@ -95,9 +109,9 @@ for iter = 1, opt.maxTestIter do
           local framesMemory = data[{{}, {i}, {}, {}, {}}]:select(2, 1)
           branch_memory:updateOutput(framesMemory)
           table.insert(inputTable, framesMemory)
-          opticalFlow  = model.modules[2].modules[2].modules[2].modules[7].output
-          local imflow = flow2colour(opticalFlow)
-          table.insert(flowTable, imflow)
+          -- opticalFlow  = model.modules[2].modules[2].modules[2].modules[7].output
+          -- local imflow = flow2colour(opticalFlow)
+          -- table.insert(flowTable, imflow)
       end
       
     -- start prediction
@@ -130,8 +144,9 @@ for iter = 1, opt.maxTestIter do
     if(math.fmod(iter, opt.testSaveIter) == 1) then
         evalLog.trace('[saveimg] input, output and target save to %s')
         OutputToImage(inputEncTable, iter, 'input')
-        OutputToImage(output, iter, 'output')
-        OutputToImage(target, iter, 'target')
+        OutputToImage(outputTable, iter, 'output')
+        OutputToImage(targetTable, iter, 'target')
+        FlowTableToImage(flowTable, iter, 'flow')
     end
 
     evalLog.info(string.format("iter: %d POD %.3f \t FAR %.3f \t CSI %.3f \t correlation %.3f \t rainRmse %.3f loss %.4f", iter, POD, FAR, CSI, correlation, rainRmse, f / (opt.outputSeqLen * iter) ))

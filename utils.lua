@@ -113,6 +113,11 @@ function timeStamp()
       return os.date("%H%M")
       -- return os.date("%m%d%H%M%S")
 end
+function SaveConf(rmspropconf, confName, iter)
+    confName = opt.modelDir..confName..tostring(iter)..'.bin'
+    torch.save(confName, rmspropconf)
+    log.info('current conf save as ', confName)
+end
 
 function SaveModel(model, modelname, iter)
     local modelParameters, gradParameters = model:getParameters()
@@ -166,9 +171,9 @@ function SkillScoreSub(scores, prediction, truth, threshold, id)
     local misses = torch.cmul(bpredFalse, btruthTrue):sum()
     
     local falseAlarms = torch.cmul(bpredTrue, btruthFalse):sum()
-    log.trace('falseAlarms: bpredTrue ', bpredTrue:mean())
-    log.trace('falseAlarms: btruthFalse ', btruthFalse:mean())
-    log.trace('falseAlarms: ', falseAlarms)
+    -- log.trace('falseAlarms: bpredTrue ', bpredTrue:mean())
+    -- log.trace('falseAlarms: btruthFalse ', btruthFalse:mean())
+    -- log.trace('falseAlarms: ', falseAlarms)
     local correctNegatives = torch.cmul(bpredFalse, btruthFalse):sum()
 
     local eps = 1e-9
