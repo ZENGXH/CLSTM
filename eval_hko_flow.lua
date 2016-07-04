@@ -5,17 +5,20 @@ require 'rnn'
 require 'torch'
 require 'ConvLSTM'
 require 'utils'
-require 'cunn'
-require 'cutorch'
 require 'ConvLSTM'
 require 'utils'
 require 'flow'
 require 'BilinearSamplerBHWD'
 require 'DenseTransformer2D' -- AffineGridGeneratorOpticalFlow2D
 require 'display_flow'
-
-local evalLog = loadfile('log.lua')()
+require 'SkillScoreEvaluator'
 paths.dofile('opts_hko.lua')
+if opt.useGpu then
+    require 'cutorch'
+    require 'cunn'
+    cutorch.setDevice(4)
+end
+local evalLog = loadfile('log.lua')()
 evalLog.level = opt.evalLogLevel or "info"
 paths.dofile('data_hko.lua')
 evalLog.outfile = opt.testLogDir..'eval_hko_log'
@@ -24,7 +27,6 @@ startTestUtils()
 assert(opt.init)
 -- opt.useGpu = false 
 evalLog.info('[init] useGpu: ', opt.useGpu)
-
 -- set criterion
 local criterion = nn.MSECriterion()
 if opt.useGpu then
@@ -44,8 +46,10 @@ end
 evalLog.info('[init] load model file: ', opt.modelFile)
 evalLog.info('[init] load model parameters: ', opt.modelPara)
 dofile(opt.modelFile)
+model = LoadParametersToModel(model)
 parameters, gradParameters = model:getParameters()
 evalLog.trace('[init] para of model init: ', parameters:sum())
+--[[
 local para = torch.load(opt.modelPara):cuda()
 evalLog.trace('[init] para of model load: ', para:sum())
 parameters:fill(1):cmul(para)
@@ -54,37 +58,22 @@ parameters:fill(1):cmul(para)
 parameters, gradParameters = model:getParameters()
 evalLog.trace('[init] para of model after set: ', parameters:sum())
 evalLog.info('[test] model: ', model)
+]]--
 
 -- get module from model
-local enc_conv = model.modules[1]
+-- local enc_conv = model.modules[1]
 
-local lstm = model.modules[2].modules[2].modules[1]
-local branch_memory = nn.Sequential()
-branch_memory:add(enc_conv):add(lstm)
 if opt.useGpu then
     model = model:cuda()
 end
 
-evalLog.info('branch_memory: ', branch_memory)
 evalLog.info('[test] lstm ', lstm)
 -- clear grad 
 model:zeroGradParameters()
 
 -- prepare datasetSeq
 datasetSeqTest = getdataSeqHko('test')
-
-local scores = {}
-scores.POD = torch.Tensor(opt.outputSeqLen):zero()
-scores.FAR = torch.Tensor(opt.outputSeqLen):zero()
-scores.CSI = torch.Tensor(opt.outputSeqLen):zero()
-scores.correlation = torch.Tensor(opt.outputSeqLen):zero()
-scores.rainRmse =  torch.Tensor(opt.outputSeqLen):zero()
-local POD = 0
-local FAR = 0
-local CSI = 0
-local correlation = 0
-local rainRmse = 0
-
+SkillScore = SkillScoreEvaluator(opt.outputSeqLen)
 for iter = 1, opt.maxTestIter do
     -- init table var
     local inputTable = {}
@@ -107,19 +96,20 @@ for iter = 1, opt.maxTestIter do
       for i = 1, opt.inputSeqLen - 1 do 
           evalLog.trace('[branch_memory] input data for encoder', i)
           local framesMemory = data[{{}, {i}, {}, {}, {}}]:select(2, 1)
-          branch_memory:updateOutput(framesMemory)
+          model:updateOutput(framesMemory)
           table.insert(inputTable, framesMemory)
-          -- opticalFlow  = model.modules[2].modules[2].modules[2].modules[7].output
-          -- local imflow = flow2colour(opticalFlow)
-          -- table.insert(flowTable, imflow)
+          opticalFlow  = clamp.output
+          local imflow = flow2colour(opticalFlow)
+          table.insert(flowTable, imflow)
       end
       
     -- start prediction
 
     local input = data[{{}, {opt.inputSeqLen}, {}, {}, {}}]:select(2, 1) 
+
+    table.insert(inputTable, input)
     local f = 0       
     for i = 1, opt.outputSeqLen do
-
         local targetTensor =  data[{{}, {opt.inputSeqLen + i}, {}, {}, {}}]:select(2, 1) 
         table.insert(targetTable, targetTensor)
         local output = model:updateOutput(input)
@@ -128,19 +118,13 @@ for iter = 1, opt.maxTestIter do
         local outputTensor = output:clone()
         table.insert(outputTable, outputTensor)
         evalLog.trace(string.format('[train] iter %d, frames id %d, loss %.4f', iter, i, f))
-
-        opticalFlow  = model.modules[2].modules[2].modules[2].modules[7].output
+        opticalFlow  = clamp.output
         local imflow = flow2colour(opticalFlow)
         table.insert(flowTable, imflow)
     end
     -- calculate scores 
-    scores = SkillScore(scores, outputTable, targetTable, opt.threthold)
-    POD = scores.POD[opt.outputSeqLen] / iter
-    FAR = scores.FAR[opt.outputSeqLen] / iter
-    CSI = scores.CSI[opt.outputSeqLen] / iter
-    correlation = scores.correlation[opt.outputSeqLen] / iter
-    rainRmse = scores.rainRmse[opt.outputSeqLen] / iter
-    
+    SkillScore:Update(outputTable, targetTable)
+
     if(math.fmod(iter, opt.testSaveIter) == 1) then
         evalLog.trace('[saveimg] input, output and target save to %s')
         OutputToImage(inputEncTable, iter, 'input')
@@ -148,19 +132,9 @@ for iter = 1, opt.maxTestIter do
         OutputToImage(targetTable, iter, 'target')
         FlowTableToImage(flowTable, iter, 'flow')
     end
-
-    evalLog.info(string.format("iter: %d POD %.3f \t FAR %.3f \t CSI %.3f \t correlation %.3f \t rainRmse %.3f loss %.4f", iter, POD, FAR, CSI, correlation, rainRmse, f / (opt.outputSeqLen * iter) ))
+    SkillScore:PrintAverage(iter)
+    evalLog.info(string.format("iter: %d  loss %.4f", iter, f / (opt.outputSeqLen * iter) ))
 end
 
-allPOD = scores.POD:div(opt.maxTestIter)
-allFAR = scores.FAR:div(opt.maxTestIter)
-allCSI = scores.CSI:div(opt.maxTestIter)
-allCorrelation = scores.correlation:div(opt.maxTestIter)
-allRainRmse = scores.rainRmse:div(opt.maxTestIter)
-
-evalLog.info("POD: ", allPOD)
-evalLog.info("FAR: ", allFAR)
-evalLog.info("CSI; ", allCSI)
-evalLog.info("correlation: ", allCorrelation)
-evalLog.info("rainRmse: ", allCorrelation)
-evalLog.info("@done evaluate")
+SkillScore:Summary(iter)
+SkillScore:Save(opt.testLogDir)

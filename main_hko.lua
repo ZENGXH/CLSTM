@@ -23,22 +23,18 @@ print(opt)
 assert(opt.init)
 
 -- init model
-dofile('model_hko.lua') 
+dofile(opt.modelFile) 
 
 local backend_name = opt.backend or 'cudnn'
-
-local backend
-if backend_name == 'cudnn' then
-  log.info('[init] using cudnn backend')
-  require 'cudnn'
-  backend = cudnn
-  enc = cudnn.convert(enc, cudnn)
-  dec = cudnn.convert(dec, cudnn)
-  cudnn.fastest = true 
+if opt.continueFromPara then
+    assert(opt.modelPara)
+    assert(opt.contIter)
+    model = LoadParametersToModel(model)
 else
-  backend = nn
-  log.info('[init] NOT using cudnn backend')
+    opt.conIter = 1
 end
+
+
 
 -- SaveModel(enc, 'enc', iter)
 -- SaveModel(dec, 'dec', iter)
@@ -68,11 +64,14 @@ local function main()
   -- TODO: init parameters of model 
 
   -- init optimization configure
-  local rmspropConf = {}
+if opt.useRmsprop then
+  rmspropConf = {}
   rmspropConf.weightDecay = opt.weightDecay
   rmspropConf.learningRate = opt.lr 
-
   -- prepare zero grad for encoder backward
+end
+
+  -- prepare zero gradient for encoder backward
   local zeroGradDec = {}
   local zeroT = torch.Tensor(opt.batchSize, opt.nFiltersMemory[2], opt.imageHeight, opt.imageWidth):zero()
   if opt.useGpu then
@@ -82,7 +81,7 @@ local function main()
       table.insert(zeroGradDec, zeroT)
   end
 
-  -- prepare zero input for decoder:
+  -- prepare zero input for decoder forward
   local inputDecTensor = torch.Tensor(opt.batchSize, opt.imageDepth, opt.imageHeight, opt.imageWidth):fill(0)
   if opt.useGpu then
       inputDecTensor = inputDecTensor:cuda()
@@ -93,17 +92,18 @@ local function main()
   end
 
   -- link enc and dec for update parameters
-  local model = nn.Sequential():add(enc):add(dec)
   parameters, grads = model:getParameters()
 
   -- init loss
   local err = 0
-  for iter = 1, opt.maxIter do
+  local loss = 0
+  for iter = opt.contIter, opt.maxIter do
       -- define eval closure
       local inputEncTable = {}
       local target = {}
       local output
       local code
+
       local feval = function() 
           enc:zeroGradParameters()
           dec:zeroGradParameters()
@@ -124,31 +124,44 @@ local function main()
           forwardConnect(enc, dec)
           output = dec:forward(inputDecTable)
 
-          local loss = criterion:updateOutput(output, target)
+          loss = criterion:updateOutput(output, target)
           local gradOutput = criterion:updateGradInput(output, target)
 
           dec:backward(inputDecTable, gradOutput)
           backwardConnect(enc, dec)
           enc:backward(inputEncTable, zeroGradDec)
+          if not opt.useRmsprop then
+              dec:updateParameters(opt.lr)
+              enc:updateParameters(opt.lr)
+          end
         return loss, grads
       end
 
-      _, fs = optim.rmsprop(feval, parameters, rmspropConf)
-      -- fs = rmspropUpdate(feval, parametersEnc, parametersDec, rmspropConf) 
-      err = err + fs[1] / opt.outputSeqLen
+      if opt.useRmsprop then
+          print 'not implement error'
+          -- _, fs = optim.rmsprop(feval, parameters, rmspropConf)
+          err = err + fs[1] / opt.outputSeqLen
+          return 
+      else 
+          feval()
+          -- fs, _ = unpack(feval)
+          err = err + loss / opt.outputSeqLen
+      end
 
-      if(math.fmod(iter, opt.displayIter) == 1) then
-          log.info(string.format('@loss %.4f, iter %d / %d, lr %.6f, param mean %.4f ', err / iter, iter, opt.maxIter, rmspropConf.learningRate, parameters:mean()))
+
+      if(math.fmod(iter, opt.displayIter) == 0) then
+          log.info(string.format('@loss %.4f, iter %d / %d, lr %.6f, param mean %.4f ', err / iter, iter, opt.maxIter, opt.lr, parameters:mean()))
       end
 
       if(math.fmod(iter, opt.saveIter) == 1) then
-          OutputToImage(inputEncTable, iter, 'input')
-          -- ViewCell(dec, iter, 'dec')
-          -- ViewCell(enc, iter, 'enc')
-          -- ViewCell(output)
-          OutputToImage(code, iter, 'code')
           log.trace('[saveimg] output')
+          OutputToImage(inputEncTable, iter, 'input')
+          OutputToImage(code, iter, 'code')
           OutputToImage(output, iter, 'output')
+          if opt.viewCell then
+              ViewCell(dec, iter, 'dec')
+              ViewCell(enc, iter, 'enc')
+          end
       end
 
       if(math.fmod(iter, opt.modelSaveIter) == 1) then

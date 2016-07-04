@@ -1,7 +1,6 @@
 require 'image'
 local log = loadfile('log.lua')()
 
-
 function startTrainUtils()
     if not paths.dirp(opt.saveDirTrainImg) then
         os.execute('mkdir -p ' .. opt.saveDirTrainImg)
@@ -171,9 +170,6 @@ function SkillScoreSub(scores, prediction, truth, threshold, id)
     local misses = torch.cmul(bpredFalse, btruthTrue):sum()
     
     local falseAlarms = torch.cmul(bpredTrue, btruthFalse):sum()
-    -- log.trace('falseAlarms: bpredTrue ', bpredTrue:mean())
-    -- log.trace('falseAlarms: btruthFalse ', btruthFalse:mean())
-    -- log.trace('falseAlarms: ', falseAlarms)
     local correctNegatives = torch.cmul(bpredFalse, btruthFalse):sum()
 
     local eps = 1e-9
@@ -284,5 +280,40 @@ function rmspropUpdate(opfunc, xEnc, xDec, config, state)
         -- return x*, f(x) before optimization
 
     return  fx
+end
+
+function LoadParametersToModel(model)
+     log.info(string.format("[init] ==> evaluating hko flow model: %s ", opt.modelPara))
+    local para = torch.load(opt.modelPara)
+
+    local p2 = para
+    if opt.useGpu then
+        p2 = p2:cuda()
+    else
+        p2 = p2:double()
+    end
+    log.info('[init] model: ', model)
+    local p, g = model:getParameters()
+    p:fill(1):cmul(p2)
+    p2 = {}
+    if opt.contRmsConf then
+        log.info(string.format("[init] ==> loading configure for rmsprop %s ", opt.contRmsConf))
+        assert(rmspropconf, 'rmspropconf not init')
+        rmspropconf = torch.load(opt.contRmsConf)   
+    end
+    return model
+end
+
+function InitSkillScore(scores)
+    log.info('[init] InitSkillScore for test, outputSeqLen: ', opt.outputSeqLen)
+    scores.POD = torch.Tensor(opt.outputSeqLen):zero()
+    scores.FAR = torch.Tensor(opt.outputSeqLen):zero()
+    scores.CSI = torch.Tensor(opt.outputSeqLen):zero()
+    scores.correlation = torch.Tensor(opt.outputSeqLen):zero()
+    scores.rainRmse =  torch.Tensor(opt.outputSeqLen):zero()
+    scores.rmse = torch.Tensor(opt.outputSeqLen):zero()
+    
+    log.info('scores: POD, FAR, CSI, correlation, rainRmse')
+    return scores
 end
 

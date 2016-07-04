@@ -35,7 +35,7 @@ function getdataSeqHko(mode)
     end
 
     log.info("[init] read data into fileList table, size in total: ", table.getn(fileList))
-    log.info("[init] size of input batch ", opt.batchSize, opt.totalSeqLen, opt.imageDepth, opt.imageHeight, opt.imageWidth)
+    log.info("[init] size of input batch ", opt.batchSize, opt.totalSeqLen, opt.imageDepth, opt.inputSizeH, opt.inputSizeW)
 
     function datasetSeq:size()
         return table.getn(fileList)
@@ -47,7 +47,7 @@ function getdataSeqHko(mode)
     function datasetSeq:SelectSeq()
         log.trace("SelectSeq")
 
-        local inputBatch = torch.Tensor(opt.batchSize, opt.totalSeqLen, opt.imageDepth, opt.imageHeight, opt.imageWidth)
+        local inputBatch = torch.Tensor(opt.batchSize, opt.totalSeqLen, opt.imageDepth, opt.inputSizeH, opt.inputSizeW)
         for batch_ind = 1, opt.batchSize do -- filling one batch one by one
             -- math.ceil(torch.uniform(1e-12, nsamples)) 
             -- choose an index in range{1,.. nsamples}
@@ -58,7 +58,8 @@ function getdataSeqHko(mode)
             for frames_id = 1, opt.totalSeqLen do
                -- local imageName = opt.dataPath..fileList[ (batch_ind - 1 + ind) * opt.totalSeqLen + frames_id]
                local imageName = opt.dataPath..fileList[ batchStart + ((frames_id - 1) * opt.selectStep + 1) ]
-               inputBatch[batch_ind][frames_id] = image.load(imageName)
+               local img = image.load(imageName)
+               inputBatch[batch_ind][frames_id][opt.imageDepth] = image.scale(img, opt.inputSizeH, opt.inputSizeW)
                if frames_id == 1 then
                    log.trace("[SelectSeq] load batch#", batch_ind, " seq#",  opt.totalSeqLen, " from ", imageName)
                end
@@ -67,6 +68,8 @@ function getdataSeqHko(mode)
             ind = ind + 1
             if opt.dataOverlap then
                 batchStart = (batch_ind - 1) + (ind - 1) * opt.batchSize  
+            elseif opt.dataShuffle or mode == 'test' then
+                batchStart = math.ceil(torch.uniform(0, #fileList - opt.totalSeqLen - 1))
             else -- not overlap for different batch,
                 batchStart = (batch_ind - 1 + ind - 1) * opt.batchSize
             end
@@ -80,7 +83,7 @@ function getdataSeqHko(mode)
          return inputBatch, ind
       end
 
-   dataSample = torch.Tensor(opt.batchSize, opt.totalSeqLen, opt.imageDepth, opt.imageHeight, opt.imageWidth)
+   dataSample = torch.Tensor(opt.batchSize, opt.totalSeqLen, opt.imageDepth, opt.inputSizeH, opt.inputSizeW)
    
    setmetatable(datasetSeq, {__index = function(self, index)
                                        local sample, i = self:SelectSeq()

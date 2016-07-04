@@ -32,21 +32,7 @@ log.info('[init] load model def from ', opt.modelFile)
 dofile(opt.modelFile) 
 
 if opt.continueFromPara then
-    log.info(string.format("[init] ==> evaluating hko flow model: %s ", opt.modelPara))
-    log.info(string.format("[init] ==> loading configure for rmsprop %s ", opt.contRmsConf))
-    local para = torch.load(opt.modelPara)
-    local p2 = para:cuda()
-    log.info('[init] model: ', model)
-    local p, g = model:getParameters()
-    p:fill(1):cmul(p2)
-    -- local p2, g2 = modelLoad:parameters()
-    -- for i = 1, #p do
-    --     p[i]:fill(1):cmul(p2[i]:cuda())
-    -- end
-    -- modelLoad = {}
-    p2 = {}
-    -- g2 = {}
-    rmspropconf = torch.load(opt.contRmsConf)
+    model = LoadParametersToModel(model)
 else
     opt.contIter = 1
     -- >>>>>>

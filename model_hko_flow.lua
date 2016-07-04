@@ -91,4 +91,5 @@ log.info('[init] gradloss: ', gradloss)
 log.info('model: ', model)
 log.info('branch_memory: ', branch_memory)
 log:info("[init] load model and branch_memory done@")
-
+lstm = model.modules[2].modules[2].modules[1]
+clamp = model.modules[2].modules[2].modules[2].modules[7]

@@ -46,5 +46,15 @@ log.trace('decoder:', dec)
 -- encSeq = nn.Sequencer(enc)
 -- decSeq = nn.Sequencer(dec)
 
-log:trace("[init] load model enc and dec done@")
+if opt.backend == 'cudnn' then
+  log.info('[init] using cudnn backend')
+  require 'cudnn'
+  enc = cudnn.convert(enc, cudnn)
+  dec = cudnn.convert(dec, cudnn)
+  cudnn.fastest = true 
+else
+  log.info('[init] NOT using cudnn backend')
+end
 
+model = nn.Sequential():add(enc):add(dec)
+log:trace("[init] link model enc and dec done@")
